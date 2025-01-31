@@ -15,6 +15,13 @@ async def parse_cmd():
         default=config.PLATFORM,
     )
     parser.add_argument(
+        "--crawl_type",
+        type=str,
+        help="choose between listing and detail, detail will continue crawl detail page and get more info",
+        choices=["detail", "listing"],
+        default=config.FUNDA_CRAWL_TYPE,
+    )
+    parser.add_argument(
         "--search_areas",
         type=str,
         nargs="+",
@@ -30,7 +37,6 @@ async def parse_cmd():
     parser.add_argument(
         "--image_size",
         choices=["small", "medium", "large"],
-        default="medium",  # Optional: set a default value
         help="Select image size (only used if download_img is enabled)",
         default=config.IMAGE_SIZE,
     )
@@ -80,3 +86,4 @@ async def parse_cmd():
     config.START_PAGE = args.start
     config.END_PAGE = args.end
     config.SAVE_DATA_OPTION = args.save_option
+    config.FUNDA_CRAWL_TYPE = args.crawl_type

@@ -58,17 +58,17 @@ class Property(BaseModel):
     type: str = Field(default="")  # e.g., "single"
     status: str = Field(default="")
     zoning: str = Field(default="")  # e.g., "residential"
-    construction_type: str = Field(default="")  # e.g., "newly_built", "resale"
+    construction_type: None | str = None  # e.g., "newly_built", "resale"
 
     # Areas
-    floor_area: List[float] = Field(default_factory=list)
-    floor_area_range: AreaRange = Field(default_factory=AreaRange)
+    floor_area: List[float] | None = Field(default=None)
+    floor_area_range: AreaRange | None = Field(default=None)
     plot_area: List[float] = Field(default_factory=list)
     plot_area_range: AreaRange = Field(default_factory=AreaRange)
 
     # Rooms and specifications
-    number_of_rooms: int = Field(default=0)
-    number_of_bedrooms: int = Field(default=0)
+    number_of_rooms: int | None = Field(default=None)
+    number_of_bedrooms: int | None = Field(default=None)
     energy_label: str = Field(default="unknown")
 
     # Price and offering

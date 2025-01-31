@@ -1,11 +1,14 @@
 import html
 import json
 import re
+import logging
 from typing import Dict, List, Tuple, Any
 
 from parsel import Selector
 
 from model.m_house_detail import HouseDetails
+
+logger = logging.getLogger("funda")
 
 
 class FundaDetailExtractor:
@@ -16,7 +19,7 @@ class FundaDetailExtractor:
     async def extract_details(page_content: str) -> HouseDetails:
         selector = Selector(text=page_content)
         house_details = {}
-
+        logger.debug("Starting house details extraction")
         xpath_mappings = {
             "price": "//div[@class='flex flex-col text-xl']/div/text()",
             "deposit": "//dt[contains(text(), 'Deposit')]/following-sibling::dd[1]/text()",

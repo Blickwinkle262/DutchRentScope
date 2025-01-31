@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import logging
 import json
 import re
 from typing import Callable, Dict, List, Optional, Union, Any
@@ -31,6 +32,8 @@ from model.m_search import (
 )
 from model.m_response import PropertyResponse, Property
 
+logger = logging.getLogger("funda")
+
 
 # from .field import SearchType
 
@@ -52,8 +55,8 @@ class FundaClient:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
 
         if response.status_code != 200:
-            print("request failed")
-            print(response.text)
+            logger.error("request failed")
+            logger.error(response.text)
             return
 
         if response_type:
@@ -74,7 +77,7 @@ class FundaClient:
             "\n".join(json.dumps(item, separators=(",", ":")) for item in data) + "\n"
         )
         url = f"{self._house_info_api_host}{uri}"
-        print(url)
+        logger.debug(url)
         return await self.request(
             method="POST",
             url=url,
@@ -123,13 +126,14 @@ class FundaClient:
         )
 
         search_params = SearchParamsCollection(base_params=base_params).to_list()
+        logger.debug(f"construct search_params {search_params}")
 
         return await self.post(uri, data=search_params, response_type="json")
 
     async def parse_single_page_house_info(self, response_data) -> PropertyResponse:
 
         try:
-            data = Box(response_data)
+            data = Box(response_data, default_box=True, default_box_attr=None)
 
             # Get first response's hits using attribute access
             hits_data = data.responses[0].hits
@@ -168,8 +172,11 @@ class FundaClient:
                     )
                     properties.append(property_obj)
                 except Exception as e:
-                    print(
-                        f"Warning: Failed to parse property {hit.get('_id', 'unknown')}: {str(e)}"
+                    logger.error(
+                        "Failed to parse property [ID: %s]",
+                        hit.get("_id", "unknown"),
+                        exc_info=True,
+                        extra={"source_data": source, "error_type": type(e).__name__},
                     )
                     continue
 
@@ -180,7 +187,7 @@ class FundaClient:
             )
 
         except Exception as e:
-            print(f"Warning: Failed to parse property data: {str(e)}")
+            logger.error("Failed to parse property data: %s", str(e), exc_info=True)
             return PropertyResponse()
 
 
@@ -212,8 +219,8 @@ class FundaPlaywrightClient:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
 
         if response.status_code != 200:
-            print("request failed")
-            print(response.text)
+            logger.error("request failed")
+            logger.error(response.text)
             return
 
         if response_type:
@@ -229,11 +236,10 @@ class FundaPlaywrightClient:
         self, uri: str, params=None, headers=None, **kwargs
     ) -> Union[Response, etree._Element]:
         url = self._host + uri  # Combine host and URI *only* here
-        print(f"fetching {url}")
+        logger.info("fetching %s", url)
 
         if params:
             url += "?" + urlencode(params)  # More concise way to add parameters
-            print("URL:", url)  # Print the full URL for debugging
 
         get_headers = headers if headers is not None else self.headers
 
@@ -245,7 +251,6 @@ class FundaPlaywrightClient:
         json_str = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
         url = f"{self._house_info_api_host}{uri}"
-        print(url)
         return await self.request(
             method="POST",
             url=url,
@@ -265,5 +270,7 @@ class FundaPlaywrightClient:
                 response = await self.get(uri, response_type="html")
                 return response
             except Exception as e:
-                print(f"Error fetching house detail for {uri}: {str(e)}")
+                logger.error(
+                    "Error fetching house detail for %s: %s", uri, str(e), exc_info=True
+                )
                 return None

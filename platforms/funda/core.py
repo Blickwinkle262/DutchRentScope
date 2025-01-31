@@ -47,19 +47,21 @@ class FundaCrawler(AbstractCrawler):
 
         elif config.FUNDA_CRAWL_TYPE == "detail":
             results = await self._get_listing_info()
+
             detail_references = [
                 HouseDetailReference(prop.id, prop.detail_page_relative_url)
                 for prop in results
             ]
 
             detailed_results = await self._get_detailed_info(detail_references)
-            print(detailed_results)
 
         else:
             raise ValueError(f"Unsupported crawl type: {config.FUNDA_CRAWL_TYPE}")
 
         if config.DOWNLOAD_IMAGES:
             await self._handle_download_imgs(results)
+        if config.SAVE_DATA_OPTION:
+            pass
 
     async def _initialize_base_client(self):
         """Initialize the basic HTTP client for listing operations"""
@@ -76,7 +78,7 @@ class FundaCrawler(AbstractCrawler):
             OfferingType.rent if config.OFFERING_TYPE == "rent" else OfferingType.buy
         )
         start_page = config.START_PAGE
-        end_page = getattr(config, "END_PAGE", None)
+        end_page = config.END_PAGE
         min_price = config.PRICE_MIN
         max_price = config.PRICE_MAX
         price_range = PriceRange(min_price, max_price)
@@ -111,7 +113,7 @@ class FundaCrawler(AbstractCrawler):
             )
             await agree_bottom.click(click_count=1)
 
-            print("loaded")
+            logger.info("loaded")
 
             # await self.context_page.wait_for_timeout(500)
             await self._initialize_playwright_client()
@@ -136,12 +138,36 @@ class FundaCrawler(AbstractCrawler):
                 if house is not None:
                     try:
                         house_info = await self._page_extractor.extract_details(house)
+                        logger.info(
+                            "Successfully extracted house details [ID: %s] | Price: %s, Area: %s, Label: %s, Status: %s, Type: %s, Description %s",
+                            house_id,
+                            house_info.price or "N/A",
+                            house_info.living_area or "N/A",
+                            house_info.energy_label or "N/A",
+                            house_info.status or "N/A",
+                            house_info.house_type or "N/A",
+                            house_info.description[:50] or "N/A",
+                        )
+
                         result.append((house_id, house_info))
 
                     except (TypeError, AttributeError) as e:
-                        pass
+                        logger.error(
+                            "Failed to extract house details [ID: %s]",
+                            house_id,
+                            exc_info=True,
+                            extra={
+                                "house_id": house_id,
+                                "error_type": type(e).__name__,
+                            },
+                        )
                 else:
-                    print(f"parse failed on {house_id} with html {house}")
+                    logger.error(
+                        "parse failed on %s with html %s",
+                        house_id,
+                        house,
+                        exc_info=True,
+                    )
             return result
 
     async def _handle_download_imgs(self, house_lists):
@@ -150,18 +176,19 @@ class FundaCrawler(AbstractCrawler):
             thumbnail_ids = prop.thumbnail_id
             download_result = await self.download_imgs(thumbnail_ids, house_name)
             for house_name, success in download_result.items():
-                print(f"House {house_name}: {'Success' if success else 'Failed'}")
+                logger.debug("House %s: suceess %s", house_name, success)
 
-    async def _print_cookies(self, context: BrowserContext):
-        """Print all cookies"""
+    async def log_cookies(self, context: BrowserContext):
+        """Log all browser context cookies"""
         cookies = await context.cookies()
-        print("[FundaCrawler.print_cookies] Current cookies:")
         for cookie in cookies:
-            print(f"Name: {cookie['name']}")
-            print(f"Value: {cookie['value']}")
-            print(f"Domain: {cookie.get('domain', 'N/A')}")
-            print(f"Path: {cookie.get('path', '/')}")
-            print("---")
+            logger.debug(
+                "Cookie: name=%s, value=%s, domain=%s, path=%s",
+                cookie["name"],
+                cookie["value"],
+                cookie.get("domain", "N/A"),
+                cookie.get("path", "/"),
+            )
 
     async def create_funda_client(self, httpx_proxy: Optional[str]) -> FundaClient:
         funda_client = FundaClient(headers=utils.funda_headers)
@@ -170,7 +197,7 @@ class FundaCrawler(AbstractCrawler):
     async def create_funda_playwright_client(
         self, httpx_proxy: Optional[str]
     ) -> FundaPlaywrightClient:
-        print(" creating funda api client")
+        logger.info(" creating funda api client")
         required_cookies = {
             ".ASPXANONYMOUS",
             "sr",
@@ -184,7 +211,7 @@ class FundaCrawler(AbstractCrawler):
             await self.browser_context.cookies(), required_cookies
         )
         # cookie_dict = utils.convert_str_cookie_to_dict(cookie_str)
-        print(cookie_str)
+        logger.debug(cookie_str)
         funda_client = FundaPlaywrightClient(
             headers={
                 "User-Agent": self.user_agent,
@@ -224,11 +251,42 @@ class FundaCrawler(AbstractCrawler):
         price_range: PriceRange | None = None,
     ) -> List[property]:
         total_properties = []
+        logger.info(
+            "Starting house search - Areas: %s, Type: %s, Price Range: %s",
+            search_areas,
+            offering_type,
+            (
+                f"€{price_range.from_price}-{price_range.to_price}"
+                if price_range
+                else "No limit"
+            ),
+        )
         first_page = await self.client.get_single_page_house_info(
             search_areas, offering_type, page=start_page, price_range=price_range
         )
+
         first_page_houses = await self.client.parse_single_page_house_info(first_page)
-        print(f"there are ${first_page_houses.total_value} houses")
+        logger.info(
+            logger.info(
+                "Processing results from page %d (%d properties)",
+                start_page,
+                len(first_page_houses.properties),
+            )
+        )
+        for property in first_page_houses.properties:
+            logger.info(
+                "Property Details [ID: %s] | Price: €%.2f/%s, Rooms: %d, Area: %.1fm², Label: %s | %s, %s %s",
+                property.id,
+                property.price.rent_price[0],
+                property.price.rent_price_condition,
+                property.number_of_rooms,
+                property.floor_area[0],
+                property.energy_label,
+                property.address.street_name,
+                property.address.house_number,
+                property.address.city,
+            )
+
         page_nums = math.ceil(first_page_houses.total_value / 15)
         total_properties.extend(first_page_houses.properties)
 
@@ -246,7 +304,25 @@ class FundaCrawler(AbstractCrawler):
 
         if tasks:
             results = await asyncio.gather(*tasks)
-            for page_properties in results:
+            for page_num, page_properties in enumerate(results, start=start_page + 1):
+                logger.info(
+                    "Processing results from page %d (%d properties)",
+                    page_num,
+                    len(page_properties),
+                )
+                for property in page_properties:
+                    logger.info(
+                        "Property Details [ID: %s] | Price: €%.2f/%s, Rooms: %d, Area: %.1fm², Label: %s | %s, %s %s",
+                        property.id,
+                        property.price.rent_price[0],
+                        property.price.rent_price_condition,
+                        property.number_of_rooms,
+                        property.floor_area[0],
+                        property.energy_label,
+                        property.address.street_name,
+                        property.address.house_number,
+                        property.address.city,
+                    )
                 total_properties.extend(page_properties)
 
         return total_properties
@@ -289,7 +365,7 @@ class FundaCrawler(AbstractCrawler):
         headless: bool = config.HEADLESS,
     ) -> BrowserContext:
         """Launch browser and create browser context"""
-        print("[FundaCrawler.launch_browser] Begin create browser context ...")
+        logger.info("[FundaCrawler.launch_browser] Begin create browser context ...")
 
         browser = await chromium.launch(headless=headless, proxy=playwright_proxy)  # type: ignore
         browser_context = await browser.new_context(
@@ -299,7 +375,3 @@ class FundaCrawler(AbstractCrawler):
 
     async def close(self):
         await self.browser_context.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(FundaCrawler().start())

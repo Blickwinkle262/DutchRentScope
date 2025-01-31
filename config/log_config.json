@@ -13,7 +13,7 @@
     "handlers": {
       "stderr": {
         "class": "logging.StreamHandler",
-        "level": "WARNING",
+        "level": "INFO",
         "formatter": "simple",
         "stream": "ext://sys.stderr"
       },
@@ -22,7 +22,7 @@
         "level": "DEBUG",
         "formatter": "detailed",
         "filename": "logs/my_app.log",
-        "maxBytes": 100000,
+        "maxBytes": 1000000,
         "backupCount": 3
       }
     },
@@ -40,7 +40,8 @@
         "handlers":[
             "stderr",
             "file" 
-        ]
+        ],
+        "propagate": false
       }
     }
   }

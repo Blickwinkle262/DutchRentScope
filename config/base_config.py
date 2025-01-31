@@ -8,11 +8,12 @@ FUNDA_CRAWL_TYPE = (
     "detail"  # support listing | detail listing will not fetch detail page
 )
 
+
 DOWNLOAD_IMAGES = False
 
 IMAGE_SIZE = "medium"  # support "small" | "medium" and "large"
 
-SEARCH_AREAS = ["leiden", "amsterdam"]
+SEARCH_AREAS = ["leiden"]
 
 OFFERING_TYPE = "rent"
 
