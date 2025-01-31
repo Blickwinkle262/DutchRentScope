@@ -19,6 +19,7 @@ from tools import utils
 from .client import FundaClient, FundaPlaywrightClient
 from model.m_search import OfferingType, PriceRange
 from .help import FundaDetailExtractor
+from store import StoreFactory
 
 logger = logging.getLogger("funda")
 
@@ -36,21 +37,23 @@ class FundaCrawler(AbstractCrawler):
         self.index_url = "https://www.funda.nl/en"
         self.user_agent = utils.get_user_agent()
         self._page_extractor = FundaDetailExtractor()
+        if config.SAVE_DATA_OPTION:
+            self.store = StoreFactory.create_store(config.SAVE_DATA_OPTION)
 
     async def start(self) -> None:
 
         await self._initialize_base_client()
 
         if config.FUNDA_CRAWL_TYPE == "listing":
-
-            results = await self._get_listing_info()
+            listing_results = await self._get_listing_info()
+            detailed_results = None
 
         elif config.FUNDA_CRAWL_TYPE == "detail":
-            results = await self._get_listing_info()
+            listing_results = await self._get_listing_info()
 
             detail_references = [
                 HouseDetailReference(prop.id, prop.detail_page_relative_url)
-                for prop in results
+                for prop in listing_results
             ]
 
             detailed_results = await self._get_detailed_info(detail_references)
@@ -58,10 +61,39 @@ class FundaCrawler(AbstractCrawler):
         else:
             raise ValueError(f"Unsupported crawl type: {config.FUNDA_CRAWL_TYPE}")
 
-        if config.DOWNLOAD_IMAGES:
-            await self._handle_download_imgs(results)
-        if config.SAVE_DATA_OPTION:
-            pass
+        if self.store:
+            logger.info("Starting data storage process")
+
+            # Store listing results
+            for result in listing_results:
+                try:
+                    await self.store.store_listing(result.to_flat_dict())
+                except Exception as e:
+                    logger.error(
+                        "Failed to store listing [ID: %s]: %s",
+                        result.id,
+                        str(e),
+                        exc_info=True,
+                    )
+            logger.info("Completed storing %d listings", len(listing_results))
+
+            # Store detail results if available
+            if detailed_results is not None:
+                for house_id, detail in detailed_results:
+                    try:
+                        await self.store.store_details(detail.to_dict_items())
+                    except Exception as e:
+                        logger.error(
+                            "Failed to store details [ID: %s]: %s",
+                            house_id,
+                            str(e),
+                            exc_info=True,
+                        )
+                logger.info(
+                    "Completed storing %d property details", len(detailed_results)
+                )
+        else:
+            logger.warning("No storage configured - skipping data storage")
 
     async def _initialize_base_client(self):
         """Initialize the basic HTTP client for listing operations"""
@@ -312,16 +344,24 @@ class FundaCrawler(AbstractCrawler):
                 )
                 for property in page_properties:
                     logger.info(
-                        "Property Details [ID: %s] | Price: €%.2f/%s, Rooms: %d, Area: %.1fm², Label: %s | %s, %s %s",
+                        "Property Details [ID: %s] | Price: €%.2f/%s, Rooms: %s, Area: %s, Label: %s | %s, %s %s",
                         property.id,
-                        property.price.rent_price[0],
-                        property.price.rent_price_condition,
-                        property.number_of_rooms,
-                        property.floor_area[0],
-                        property.energy_label,
-                        property.address.street_name,
-                        property.address.house_number,
-                        property.address.city,
+                        (
+                            property.price.rent_price[0]
+                            if property.price.rent_price
+                            else 0.0
+                        ),
+                        property.price.rent_price_condition or "N/A",
+                        property.number_of_rooms or "N/A",
+                        (
+                            f"{property.floor_area[0]:.1f}m²"
+                            if property.floor_area
+                            else "N/A"
+                        ),
+                        property.energy_label or "N/A",
+                        property.address.street_name or "N/A",
+                        property.address.house_number or "N/A",
+                        property.address.city or "N/A",
                     )
                 total_properties.extend(page_properties)
 
@@ -331,7 +371,7 @@ class FundaCrawler(AbstractCrawler):
         self,
         thumbnail_ids: list[str],
         house_name: str,
-        base_path: str | Path = "house_images",
+        base_path: str | Path = "data/house_images",
         img_size: str = "medium",
     ) -> dict[str, bool]:
 

@@ -1,3 +1,6 @@
+from typing import Dict
+
+
 class ItemDescriptor:
     def __init__(self, field_type=str, pipeline_func=None):
         self.field_type = field_type
@@ -178,6 +181,22 @@ class HouseDetails:
             if not name.startswith("_")
             and isinstance(getattr(cls, name), ItemDescriptor)
         }
+
+    def to_dict_items(self) -> Dict:
+        """Convert HouseDetails instance to a dictionary with values.
+
+        Returns:
+            Dict: A dictionary containing all descriptor field values, with field names as keys.
+            For example: {'price': 1500.0, 'deposit': 2000.0, ...}
+        """
+        descriptor_names = [
+            name
+            for name, attr in vars(self.__class__).items()
+            if isinstance(attr, ItemDescriptor)
+        ]
+
+        # Create dictionary with actual values from instance
+        return {name: getattr(self, name) for name in descriptor_names}
 
 
 class HouseInfo:

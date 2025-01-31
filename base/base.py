@@ -33,11 +33,7 @@ class AbstractCrawler(ABC):
 
 class AbstractStore(ABC):
     @abstractmethod
-    async def store_decription(self, description_item: Dict):
-        pass
-
-    @abstractmethod
-    async def store_image(self, image_item: Dict):
+    async def store_listing(self, description_item: Dict):
         pass
 
     @abstractmethod

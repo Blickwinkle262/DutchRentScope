@@ -15,7 +15,7 @@ IMAGE_SIZE = "medium"  # support "small" | "medium" and "large"
 
 SEARCH_AREAS = ["leiden"]
 
-OFFERING_TYPE = "rent"
+OFFERING_TYPE = "rent"  # "rent" or "buy"
 
 PRICE_MIN = 0
 PRICE_MAX = 3000
@@ -26,3 +26,5 @@ END_PAGE = 3
 MAX_CONCURRENCY_NUM = 5
 
 SAVE_DATA_OPTION = "csv"  # support "db" and "csv"
+
+POSTGRES_DSN = ""

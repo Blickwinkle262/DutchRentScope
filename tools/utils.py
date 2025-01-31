@@ -4,6 +4,7 @@ import logging.config
 import logging.handlers
 import pathlib
 import random
+import time
 import aiohttp
 from pathlib import Path
 
@@ -133,6 +134,10 @@ funda_headers = {
     "Priority": "u=4",
     "TE": "trailers",
 }
+
+
+def get_current_date() -> str:
+    return time.strftime("%Y-%m-%d", time.localtime())
 
 
 def setup_logging():

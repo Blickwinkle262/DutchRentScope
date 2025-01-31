@@ -173,3 +173,8 @@ docs/.vitepress/cache
 
 house_images/
 *.jpg
+
+# Log files
+logs/
+logs/**
+*.log

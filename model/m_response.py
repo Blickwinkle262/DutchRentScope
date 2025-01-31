@@ -1,8 +1,9 @@
-from pydantic import BaseModel, Field, conlist
-from typing import List, Optional, Any
 from datetime import datetime
-import json
+from typing import List, Optional, Any, Dict
+
+
 from box import Box
+from pydantic import BaseModel, Field, conlist
 
 
 class PriceRange(BaseModel):
@@ -87,6 +88,73 @@ class Property(BaseModel):
     # Metadata
     publish_date: str = Field(default="")
     blikvanger: Blikvanger = Field(default_factory=Blikvanger)
+
+    def to_flat_dict(self) -> Dict:
+        """Convert Property object to a flat dictionary structure"""
+        base_dict = {
+            # Basic information
+            "id": self.id,
+            "property_type": self.property_type,
+            "type": self.type,
+            "status": self.status,
+            "zoning": self.zoning,
+            "construction_type": self.construction_type,
+            # Areas
+            "floor_area": self.floor_area[0] if self.floor_area else None,
+            "plot_area": self.plot_area[0] if self.plot_area else None,
+            # Area ranges
+            "floor_area_range_min": (
+                self.floor_area_range.gte if self.floor_area_range else None
+            ),
+            "floor_area_range_max": (
+                self.floor_area_range.lte if self.floor_area_range else None
+            ),
+            "plot_area_range_min": self.plot_area_range.gte,
+            "plot_area_range_max": self.plot_area_range.lte,
+            # Rooms and specs
+            "number_of_rooms": self.number_of_rooms,
+            "number_of_bedrooms": self.number_of_bedrooms,
+            "energy_label": self.energy_label,
+            # Price
+            "rent_price": self.price.rent_price[0] if self.price.rent_price else None,
+            "rent_price_condition": self.price.rent_price_condition,
+            "rent_price_type": self.price.rent_price_type,
+            "rent_price_range_min": self.price.rent_price_range.gte,
+            "rent_price_range_max": self.price.rent_price_range.lte,
+            # Address
+            "address_country": self.address.country,
+            "address_province": self.address.province,
+            "address_city": self.address.city,
+            "address_municipality": self.address.municipality,
+            "address_district": self.address.wijk,
+            "address_neighbourhood": self.address.neighbourhood,
+            "address_street": self.address.street_name,
+            "address_number": self.address.house_number,
+            "address_suffix": self.address.house_number_suffix,
+            "address_postal_code": self.address.postal_code,
+            "address_is_bag": self.address.is_bag_address,
+            # Agent (first agent if exists)
+            "agent_name": self.agent[0] if self.agent else None,
+            # Media and URLs
+            "detail_url": self.detail_page_relative_url,
+            "media_types": (
+                ",".join(self.available_media_types)
+                if self.available_media_types
+                else ""
+            ),
+            # Metadata
+            "publish_date": self.publish_date,
+            "blikvanger_enabled": self.blikvanger.enabled,
+        }
+
+        # 添加当前时间戳
+        base_dict["crawl_date"] = datetime.now().isoformat()
+
+        return base_dict
+
+    def to_nested_dict(self) -> Dict:
+        """Convert to nested dictionary structure (using model_dump)"""
+        return self.model_dump()
 
 
 class PropertyResponse(BaseModel):

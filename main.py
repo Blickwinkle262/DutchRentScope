@@ -4,6 +4,7 @@ import logging
 
 import cmd_arg
 import config
+import db
 
 from base.base import AbstractCrawler
 from platforms.funda.core import FundaCrawler
@@ -35,14 +36,14 @@ async def main():
     await cmd_arg.parse_cmd()
 
     # # init db
-    # if config.SAVE_DATA_OPTION == "db":
-    #     await db.init_db()
+    if config.SAVE_DATA_OPTION == "db":
+        await db.init_db()
 
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
 
-    # if config.SAVE_DATA_OPTION == "db":
-    #     await db.close()
+    if config.SAVE_DATA_OPTION == "db":
+        await db.close_db()
 
 
 if __name__ == "__main__":
