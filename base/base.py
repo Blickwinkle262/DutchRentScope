@@ -13,13 +13,6 @@ class AbstractCrawler(ABC):
         pass
 
     @abstractmethod
-    async def crawl_info(self):
-        """
-        crawl info
-        """
-        pass
-
-    @abstractmethod
     async def launch_browser(
         self,
         chromium: BrowserType,

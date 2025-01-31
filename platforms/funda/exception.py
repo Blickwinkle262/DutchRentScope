@@ -2,8 +2,8 @@ from httpx import RequestError
 
 
 class DataFetchError(RequestError):
-    """something error when fetch"""
+    """Data acquiring error during fetching"""
 
 
 class IPBlockError(RequestError):
-    """fetch so fast that the server block us ip"""
+    """IP block"""

@@ -16,17 +16,20 @@ from playwright.async_api import BrowserContext, Page
 from tools import utils
 
 from .exception import DataFetchError
-from .param import (
+from model.m_search import (
     SearchParamsCollection,
     SearchParams,
     PublicationDate,
     Page,
-    OffereingType,
+    OfferingType,
     Availability,
     ZoningType,
     ConstructionPeriod,
+    EnergyLabel,
+    PriceRange,
+    Price,
 )
-from .response_model import PropertyResponse, Property
+from model.m_response import PropertyResponse, Property
 
 
 # from .field import SearchType
@@ -70,7 +73,6 @@ class FundaClient:
         json_str = (
             "\n".join(json.dumps(item, separators=(",", ":")) for item in data) + "\n"
         )
-        print(json_str)
         url = f"{self._house_info_api_host}{uri}"
         print(url)
         return await self.request(
@@ -84,9 +86,11 @@ class FundaClient:
     async def get_single_page_house_info(
         self,
         selected_area: List[str],
-        offering_type: OffereingType,
+        offering_type: OfferingType,
+        price_range: PriceRange,
         page: int = 1,
         free_text_search: str = "",
+        energy_labels: List[EnergyLabel] = None,
         availability: Optional[List[Availability]] = None,
         publication_date: PublicationDate = PublicationDate.NO_PREFERENCE,
         zoning: Optional[List[ZoningType]] = None,
@@ -98,6 +102,12 @@ class FundaClient:
         uri = "/_msearch/template"
 
         from_index = (page - 1) * 15
+        if offering_type == OfferingType.rent:
+            price = Price(rent_price=price_range)
+        elif offering_type == OfferingType.buy:
+            price = Price(selling_price=price_range)
+        else:
+            price = None
 
         base_params = SearchParams(
             selected_area=selected_area,
@@ -108,14 +118,16 @@ class FundaClient:
             page=Page(from_=from_index),
             construction_period=construction_period,
             zoning=zoning,
+            energy_labels=energy_labels,
+            price=price,
         )
 
         search_params = SearchParamsCollection(base_params=base_params).to_list()
 
         return await self.post(uri, data=search_params, response_type="json")
 
-    async def parse_single_page_house_info(self, response_data):
-        print(type(response_data))
+    async def parse_single_page_house_info(self, response_data) -> PropertyResponse:
+
         try:
             data = Box(response_data)
 
@@ -132,7 +144,7 @@ class FundaClient:
                     # Create Property object using Pydantic
                     property_obj = Property(
                         id=source.id,
-                        object_type=source.object_type,
+                        property_type=source.object_type,
                         type=source.type,
                         status=source.status,
                         zoning=source.zoning,
@@ -150,7 +162,7 @@ class FundaClient:
                         agent=source.agent,
                         thumbnail_id=source.thumbnail_id,
                         available_media_types=source.available_media_types,
-                        object_detail_page_relative_url=source.object_detail_page_relative_url,
+                        detail_page_relative_url=source.object_detail_page_relative_url,
                         publish_date=source.publish_date,
                         blikvanger=source.blikvanger,
                     )
@@ -185,7 +197,7 @@ class FundaPlaywrightClient:
         self.proxies = proxies
         self.timeout = timeout
         self.headers = headers
-        self._host = "https://www.funda.nl"
+        self._host = "https://www.funda.nl/en"
         self._house_info_api_host = "https://listing-search-wonen.funda.io"
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
@@ -217,6 +229,7 @@ class FundaPlaywrightClient:
         self, uri: str, params=None, headers=None, **kwargs
     ) -> Union[Response, etree._Element]:
         url = self._host + uri  # Combine host and URI *only* here
+        print(f"fetching {url}")
 
         if params:
             url += "?" + urlencode(params)  # More concise way to add parameters
@@ -230,7 +243,7 @@ class FundaPlaywrightClient:
         post_headers = headers if headers is not None else self.headers
 
         json_str = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
-        print(json_str)
+
         url = f"{self._house_info_api_host}{uri}"
         print(url)
         return await self.request(
@@ -246,8 +259,11 @@ class FundaPlaywrightClient:
         self.headers["Cookie"] = cookie_str
         self.cookie_dict = cookie_dict
 
-    async def get_house_detail_info(self, uri):
-        pass
-
-    async def parse_house_detail_info(self, response_data):
-        pass
+    async def get_house_detail_info(self, uri, semaphore):
+        async with semaphore:
+            try:
+                response = await self.get(uri, response_type="html")
+                return response
+            except Exception as e:
+                print(f"Error fetching house detail for {uri}: {str(e)}")
+                return None

@@ -54,7 +54,7 @@ class Blikvanger(BaseModel):
 class Property(BaseModel):
     # Basic information
     id: int = Field(default=0)
-    object_type: str = Field(default="")  # e.g., "apartment", "house"
+    property_type: str = Field(default="")  # e.g., "apartment", "house"
     type: str = Field(default="")  # e.g., "single"
     status: str = Field(default="")
     zoning: str = Field(default="")  # e.g., "residential"
@@ -82,7 +82,7 @@ class Property(BaseModel):
     # Media and URLs
     thumbnail_id: List[int] = Field(default_factory=list)
     available_media_types: List[str] = Field(default_factory=list)
-    object_detail_page_relative_url: str = Field(default="")
+    detail_page_relative_url: str = Field(default="")
 
     # Metadata
     publish_date: str = Field(default="")

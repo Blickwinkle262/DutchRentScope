@@ -6,16 +6,10 @@ from typing import List, Optional, Union, Dict, Any, Generator
 
 from urllib.parse import urlencode, quote_plus
 
-from config.base_config import search_date
-
-
-class SearchType(Enum):
-    RENT = "huur"
-    BUY = "koop"
+from config import SEARCH_DATE
 
 
 class EnergyLabel(str, Enum):
-    # 正确的URL编码格式
     A_PLUS_5 = "A+++++"
     A_PLUS_4 = "A++++"
     A_PLUS_3 = "A+++"
@@ -73,7 +67,6 @@ class ConstructionPeriod(str, Enum):
     def parse_years(
         cls, start_year: int, end_year: Optional[int] = None
     ) -> Union[List["ConstructionPeriod"], "ConstructionPeriod"]:
-        """根据开始年份和可选的结束年份返回对应的建筑时期"""
         if end_year is None:
             # 单一年份判断
             if start_year < 1906:
@@ -95,68 +88,12 @@ class ConstructionPeriod(str, Enum):
 
             return cls.UNKNOWN
         else:
-            # 处理年份范围，返回所有符合的时期
             periods = []
             for year in range(start_year, end_year + 1):
                 period = cls.parse_years(year)
                 if period not in periods:
                     periods.append(period)
             return periods
-
-
-@dataclass
-class FundaSearchParams:
-    # Required parameters
-    search_type: SearchType = field(default=SearchType.RENT)
-    selected_area: str = field(default=None)
-    # Optional parameters - 使用 None 作为默认值
-    price_range: Optional[tuple[int, int]] = field(default=None)
-    object_types: Optional[List[ObjectType]] = field(default=None)
-    availability_types: Optional[List[Availability]] = field(default=None)
-    floor_area: Optional[tuple[int, int]] = field(default=None)
-    energy_labels: Optional[List[EnergyLabel]] = field(default=None)
-    exterior_space_types: Optional[List[ExteriorSpaceType]] = field(default=None)
-    garden_orientations: Optional[List[GardenOrientation]] = field(default=None)
-    construction_period: Optional[List[ConstructionPeriod]] = field(default=None)
-
-    def to_dict(self) -> dict:
-        params = {}
-
-        if self.selected_area:
-            params["selected_area"] = quote_plus(json.dumps([self.selected_area]))
-
-        if self.price_range:
-            params["price"] = quote_plus(f"{self.price_range[0]}-{self.price_range[1]}")
-
-        if self.object_types:
-            params["object_type"] = json.dumps(
-                [t.value for t in self.object_types]
-            )  # Use json.dumps
-
-        if self.availability_types:
-            params["availability"] = json.dumps(
-                [a.value for a in self.availability_types]
-            )  # Use json.dumps
-
-        if self.floor_area:
-            params["floor_area"] = f"{self.floor_area[0]}-{self.floor_area[1]}"
-
-        if self.energy_labels:
-            params["energy_label"] = json.dumps(
-                [label.value for label in self.energy_labels]
-            )  # Use json.dumps
-
-        if self.exterior_space_types:
-            params["exterior_space_type"] = json.dumps(
-                [t.value for t in self.exterior_space_types]
-            )  # Use json.dumps
-
-        if self.garden_orientations:
-            params["exterior_space_garden_orientation"] = json.dumps(
-                [o.value for o in self.garden_orientations]
-            )  # Use json.dumps
-
-        return params
 
 
 class SearchTypeId(Enum):
@@ -189,7 +126,7 @@ class SearchTypeId(Enum):
     TYPE = "type"
     OPEN_HOUSE = "open_house"
 
-    def get_request_id(self, search_date: str = search_date) -> str:
+    def get_request_id(self, search_date: str = SEARCH_DATE) -> str:
         return f"{self.value}_{search_date}"
 
 
@@ -233,7 +170,7 @@ class Sort:
     old_option: str = "relevance"
 
 
-class OffereingType(str, Enum):
+class OfferingType(str, Enum):
     rent = "rent"
     buy = "buy"
 
@@ -244,14 +181,39 @@ class ZoningType(str, Enum):
 
 
 @dataclass
+class PriceRange:
+    from_price: int
+    to_price: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"from": self.from_price, "to": self.to_price}
+
+
+@dataclass
+class Price:
+    rent_price: Optional[PriceRange] = None
+    selling_price: Optional[PriceRange] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {}
+        if self.rent_price:
+            result["rent_price"] = self.rent_price.to_dict()
+        if self.selling_price:
+            result["selling_price"] = self.selling_price.to_dict()
+        return result
+
+
+@dataclass
 class SearchParams:
 
     selected_area: Optional[List[str]]
-    offering_type: OffereingType
+    offering_type: OfferingType
 
     free_text_search: str
     page: Page
 
+    price: Optional[Price] = None
+    energy_labels: Optional[List[EnergyLabel]] = field(default=None)
     type: List[str] = field(default_factory=lambda: ["single"])
     sort: Sort = field(default_factory=Sort)
     open_house: Dict = field(default_factory=dict)
@@ -268,6 +230,8 @@ class SearchParams:
         # Special handling for publication_date and Page
         if self.publication_date:
             result["publication_date"] = self.publication_date.to_dict()
+        if self.price:
+            result["price"] = self.price.to_dict()
         result["page"] = self.page.to_dict()
 
         result = {
@@ -291,7 +255,7 @@ class SearchItem:
 
     @classmethod
     def create(
-        cls, search_type: SearchTypeId, params: SearchParams, search_date=search_date
+        cls, search_type: SearchTypeId, params: SearchParams, search_date=SEARCH_DATE
     ) -> "SearchItem":
         index_line = {"index": "listings-wonen-searcher-alias-prod"}
         body = {
@@ -310,7 +274,7 @@ class SearchParamsCollection:
 
     base_params: SearchParams
 
-    search_date: str = search_date
+    search_date: str = SEARCH_DATE
     search_types: List[SearchTypeId] = None
 
     def __post_init__(self):

@@ -1,8 +1,17 @@
+import atexit
+import json
+import logging.config
+import logging.handlers
+import pathlib
 import random
+import aiohttp
+from pathlib import Path
 
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple, Set
 from playwright.async_api import Cookie, Page
+
+import aiofiles
 
 
 def get_user_agent() -> str:
@@ -62,17 +71,6 @@ def convert_cookies(
 
     return cookies_str, cookie_dict
 
-    # def convert_cookies(cookies: Optional[List[Cookie]]) -> Tuple[str, Dict]:
-    #     if not cookies:
-    #         return "", {}
-    #     cookies_str = ";".join(
-    #         [f"{cookie.get('name')}={cookie.get('value')}" for cookie in cookies]
-    #     )
-    #     cookie_dict = dict()
-    #     for cookie in cookies:
-    #         cookie_dict[cookie.get("name")] = cookie.get("value")
-    # return cookies_str, cookie_dict
-
 
 def convert_str_cookie_to_dict(cookie_str: str) -> Dict:
     cookie_dict: Dict[str, str] = dict()
@@ -90,3 +88,59 @@ def convert_str_cookie_to_dict(cookie_str: str) -> Dict:
             cookie_value = "".join(cookie_value)
         cookie_dict[cookie_list[0]] = cookie_value
     return cookie_dict
+
+
+def generate_image_url(thumb_id: int, size: str = "medium") -> str:
+    size_map = {"small": "360x240", "medium": "720x480", "large": "1440x960"}
+    if size not in size_map:
+        raise ValueError(f"Size must be one of {list(size_map.keys())}")
+    thumb_id_str = str(thumb_id).zfill(9)
+    parts = [thumb_id_str[:3], thumb_id_str[3:6], thumb_id_str[6:]]
+
+    resolution = size_map[size]
+    return f"https://cloud.funda.nl/valentina_media/{parts[0]}/{parts[1]}/{parts[2]}_{resolution}.jpg"
+
+
+async def download_single_image(
+    url: str, save_path: Path, session: aiohttp.ClientSession
+) -> bool:
+    try:
+        async with session.get(url) as response:
+            if response.status == 200:
+                async with aiofiles.open(save_path, "wb") as f:
+                    await f.write(await response.read())
+                return True
+            return False
+    except Exception as e:
+        print(f"Error downloading {url}: {str(e)}")
+        return False
+
+
+funda_headers = {
+    "Host": "listing-search-wonen.funda.io",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0",
+    "Accept": "application/x-ndjson",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Referer": "https://www.funda.nl/",
+    "content-type": "application/x-ndjson",
+    "Origin": "https://www.funda.nl",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "cross-site",
+    "Sec-GPC": "1",
+    "Priority": "u=4",
+    "TE": "trailers",
+}
+
+
+def setup_logging():
+    config_file = pathlib.Path("config/log_config.json")
+    with open(config_file) as f_in:
+        config = json.load(f_in)
+    logging.config.dictConfig(config)
+    queue_handler = logging.getHandlerByName("queue_handler")
+    if queue_handler is not None:
+        queue_handler.listener.start()
+        atexit.register(queue_handler.listener.stop)

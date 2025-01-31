@@ -1,6 +1,6 @@
 import unittest
 
-from model.funda import RentInfo, RentItemDescriptor
+from model.m_house_detail import RentInfo, RentItemDescriptor
 
 
 class TestRentItemDescriptor(unittest.TestCase):
