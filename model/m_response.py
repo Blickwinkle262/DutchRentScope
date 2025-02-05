@@ -18,6 +18,12 @@ class Price(BaseModel):
     rent_price_type: str = Field(default="regular")
 
 
+class BuyPrice(BaseModel):
+    selling_price: List[float] = Field(default_factory=list)
+    selling_price_range: PriceRange = Field(default_factory=PriceRange)
+    selling_price_type: str = Field(default="regular")
+
+
 class AreaRange(BaseModel):
     gte: float = Field(default=0.0)
     lte: float = Field(default=0.0)
@@ -161,3 +167,115 @@ class PropertyResponse(BaseModel):
     total_value: int = Field(default=0)
     total_relation: str = Field(default="eq")
     properties: List[Property] = Field(default_factory=list)
+
+
+class BuyProperty(BaseModel):
+    # Basic information
+    id: int = Field(default=0)
+    property_type: str = Field(default="")  # e.g., "apartment", "house"
+    type: str = Field(default="")  # e.g., "single"
+    status: str = Field(default="")
+    zoning: str = Field(default="")  # e.g., "residential"
+    construction_type: None | str = None  # e.g., "newly_built", "resale"
+
+    # Areas
+    floor_area: List[float] | None = Field(default=None)
+    floor_area_range: AreaRange | None = Field(default=None)
+    plot_area: List[float] = Field(default_factory=list)
+    plot_area_range: AreaRange = Field(default_factory=AreaRange)
+
+    # Rooms and specifications
+    number_of_rooms: int | None = Field(default=None)
+    number_of_bedrooms: int | None = Field(default=None)
+    energy_label: str = Field(default="unknown")
+
+    # Price and offering
+    price: BuyPrice = Field(default_factory=BuyPrice)
+    offering_type: List[str] = Field(default_factory=list)
+
+    # Location and agent
+    address: Address = Field(default_factory=Address)
+    agent: List[Agent] = Field(default_factory=list)
+
+    # Media and URLs
+    thumbnail_id: List[int] = Field(default_factory=list)
+    available_media_types: List[str] = Field(default_factory=list)
+    detail_page_relative_url: str = Field(default="")
+
+    # Metadata
+    publish_date: str = Field(default="")
+    blikvanger: Blikvanger = Field(default_factory=Blikvanger)
+
+    def to_flat_dict(self) -> Dict:
+        """Convert BuyProperty object to a flat dictionary structure"""
+        base_dict = {
+            # Basic information
+            "id": self.id,
+            "property_type": self.property_type,
+            "type": self.type,
+            "status": self.status,
+            "zoning": self.zoning,
+            "construction_type": self.construction_type,
+            # Areas
+            "floor_area": self.floor_area[0] if self.floor_area else None,
+            "plot_area": self.plot_area[0] if self.plot_area else None,
+            # Area ranges
+            "floor_area_range_min": (
+                self.floor_area_range.gte if self.floor_area_range else None
+            ),
+            "floor_area_range_max": (
+                self.floor_area_range.lte if self.floor_area_range else None
+            ),
+            "plot_area_range_min": self.plot_area_range.gte,
+            "plot_area_range_max": self.plot_area_range.lte,
+            # Rooms and specs
+            "number_of_rooms": self.number_of_rooms,
+            "number_of_bedrooms": self.number_of_bedrooms,
+            "energy_label": self.energy_label,
+            # Buy Price
+            "asking_price": (
+                self.price.selling_price[0] if self.price.selling_price else None
+            ),
+            "asking_price_range_min": self.price.selling_price_range.gte,
+            "asking_price_range_max": self.price.selling_price_range.lte,
+            "price_type": self.price.selling_price_type,
+            # Address
+            "address_country": self.address.country,
+            "address_province": self.address.province,
+            "address_city": self.address.city,
+            "address_municipality": self.address.municipality,
+            "address_district": self.address.wijk,
+            "address_neighbourhood": self.address.neighbourhood,
+            "address_street": self.address.street_name,
+            "address_number": self.address.house_number,
+            "address_suffix": self.address.house_number_suffix,
+            "address_postal_code": self.address.postal_code,
+            "address_is_bag": self.address.is_bag_address,
+            # Agent
+            "agent_name": self.agent[0].name if self.agent else None,
+            # Media and URLs
+            "detail_url": self.detail_page_relative_url,
+            "media_types": (
+                ",".join(self.available_media_types)
+                if self.available_media_types
+                else ""
+            ),
+            # Metadata
+            "publish_date": self.publish_date,
+            "blikvanger_enabled": self.blikvanger.enabled,
+        }
+
+        # 添加当前时间戳
+        base_dict["crawl_date"] = datetime.now().isoformat()
+
+        return base_dict
+
+    def to_nested_dict(self) -> Dict:
+        """Convert to nested dictionary structure (using model_dump)"""
+        return self.model_dump()
+
+
+class BuyPropertyResponse(BaseModel):
+    total_value: int = Field(default=0)
+    total_relation: str = Field(default="eq")
+    properties: List[BuyProperty] = Field(default_factory=list)

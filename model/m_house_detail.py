@@ -36,6 +36,13 @@ class ItemDescriptor:
 
 
 class HouseDetails:
+    @ItemDescriptor(int)
+    def id(self, value):
+        if not value:
+            return 999999
+        else:
+            return value
+
     @ItemDescriptor(float)
     def price(self, value):
         """Convert price string to float, handling thousands separators"""
@@ -49,7 +56,6 @@ class HouseDetails:
         except (ValueError, AttributeError):
             return 0
 
-    @ItemDescriptor(float)
     def deposit(self, value):
         """Clean deposit amount, handling thousands separators"""
         if not value:

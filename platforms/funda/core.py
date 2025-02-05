@@ -169,7 +169,9 @@ class FundaCrawler(AbstractCrawler):
             for house_id, house in house_details:
                 if house is not None:
                     try:
-                        house_info = await self._page_extractor.extract_details(house)
+                        house_info = await self._page_extractor.extract_details(
+                            id=house_id, page_content=house
+                        )
                         logger.info(
                             "Successfully extracted house details [ID: %s] | Price: %s, Area: %s, Label: %s, Status: %s, Type: %s, Description %s",
                             house_id,
@@ -269,7 +271,9 @@ class FundaCrawler(AbstractCrawler):
         current_page = await self.client.get_single_page_house_info(
             search_areas, offering_type, price_range=price_range, page=page
         )
-        parsed_result = await self.client.parse_single_page_house_info(current_page)
+        parsed_result = await self.client.parse_single_page_house_info(
+            response_data=current_page, offering_type=offering_type
+        )
         if parsed_result.properties:
             return parsed_result.properties
         return []
@@ -297,7 +301,9 @@ class FundaCrawler(AbstractCrawler):
             search_areas, offering_type, page=start_page, price_range=price_range
         )
 
-        first_page_houses = await self.client.parse_single_page_house_info(first_page)
+        first_page_houses = await self.client.parse_single_page_house_info(
+            response_data=first_page, offering_type=offering_type
+        )
         logger.info(
             logger.info(
                 "Processing results from page %d (%d properties)",
@@ -306,16 +312,28 @@ class FundaCrawler(AbstractCrawler):
             )
         )
         for property in first_page_houses.properties:
+            if offering_type == OfferingType.rent:
+                # situation rent
+                price_display = f"€{property.price.rent_price[0]:.2f}/{property.price.rent_price_condition}"
+            else:
+                # situation buy
+                price_display = f"€{property.price.selling_price[0]:,.2f}"
+
+            # 构建房号显示（包含后缀）
+            house_number_display = property.address.house_number
+            if property.address.house_number_suffix:
+                house_number_display += f" {property.address.house_number_suffix}"
+
             logger.info(
-                "Property Details [ID: %s] | Price: €%.2f/%s, Rooms: %d, Area: %.1fm², Label: %s | %s, %s %s",
+                "Property Details [ID: %s] [%s] | Price: %s, Rooms: %d, Area: %.1fm², Label: %s | %s, %s %s",
                 property.id,
-                property.price.rent_price[0],
-                property.price.rent_price_condition,
+                property.offering_type[0].upper(),  # 显示 RENT 或 BUY
+                price_display,
                 property.number_of_rooms,
                 property.floor_area[0],
                 property.energy_label,
                 property.address.street_name,
-                property.address.house_number,
+                house_number_display,
                 property.address.city,
             )
 
@@ -342,26 +360,32 @@ class FundaCrawler(AbstractCrawler):
                     page_num,
                     len(page_properties),
                 )
-                for property in page_properties:
+                for property in first_page_houses.properties:
+                    if offering_type == OfferingType.rent:
+                        # situation rent
+                        price_display = f"€{property.price.rent_price[0]:.2f}/{property.price.rent_price_condition}"
+                    else:
+                        # situation buy
+                        price_display = f"€{property.price.selling_price[0]:,.2f}"
+
+                    # 构建房号显示（包含后缀）
+                    house_number_display = property.address.house_number
+                    if property.address.house_number_suffix:
+                        house_number_display += (
+                            f" {property.address.house_number_suffix}"
+                        )
+
                     logger.info(
-                        "Property Details [ID: %s] | Price: €%.2f/%s, Rooms: %s, Area: %s, Label: %s | %s, %s %s",
+                        "Property Details [ID: %s] [%s] | Price: %s, Rooms: %d, Area: %.1fm², Label: %s | %s, %s %s",
                         property.id,
-                        (
-                            property.price.rent_price[0]
-                            if property.price.rent_price
-                            else 0.0
-                        ),
-                        property.price.rent_price_condition or "N/A",
-                        property.number_of_rooms or "N/A",
-                        (
-                            f"{property.floor_area[0]:.1f}m²"
-                            if property.floor_area
-                            else "N/A"
-                        ),
-                        property.energy_label or "N/A",
-                        property.address.street_name or "N/A",
-                        property.address.house_number or "N/A",
-                        property.address.city or "N/A",
+                        property.offering_type[0].upper(),  # 显示 RENT 或 BUY
+                        price_display,
+                        property.number_of_rooms,
+                        property.floor_area[0],
+                        property.energy_label,
+                        property.address.street_name,
+                        house_number_display,
+                        property.address.city,
                     )
                 total_properties.extend(page_properties)
 

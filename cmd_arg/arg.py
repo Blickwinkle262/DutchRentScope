@@ -67,6 +67,12 @@ async def parse_cmd():
         choices=["db", "csv", "json"],
         default=config.SAVE_DATA_OPTION,
     )
+    parser.add_argument(
+        "--offering_type",
+        type=str,
+        choices=["buy", "rent"],
+        default=config.OFFERING_TYPE,
+    )
 
     def validate_price_range(args):
         if args.min_price is not None and args.max_price is not None:
@@ -87,3 +93,4 @@ async def parse_cmd():
     config.END_PAGE = args.end
     config.SAVE_DATA_OPTION = args.save_option
     config.FUNDA_CRAWL_TYPE = args.crawl_type
+    config.OFFERING_TYPE = args.offering_type

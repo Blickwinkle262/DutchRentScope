@@ -38,26 +38,20 @@ def calculate_number_of_files(file_store_path: str) -> int:
 
 class FundaCsvStore(AbstractStore):
     csv_store_path: str = "data/funda"
-    file_count: int = calculate_number_of_files(csv_store_path)
 
     def __init__(self):
         pathlib.Path(self.csv_store_path).mkdir(parents=True, exist_ok=True)
 
-    def get_file_name(self, store_type):
-        return f"{self.csv_store_path}/{self.file_count}_{store_type}_{utils.get_current_date()}.csv"
+    def get_file_name(self, store_type, offer_type):
+        file_count = calculate_number_of_files(self.csv_store_path)
+        return f"{self.csv_store_path}/{file_count}_{store_type}_{offer_type}_{utils.get_current_date()}.csv"
 
-    async def save_data_to_csv(self, save_item: Dict, store_type: str):
-        """
-        Below is a simple way to save it in CSV format.
-        Args:
-            save_item:  save content dict info
-            store_type: Save type contains content and comments（contents | comments）
+    async def save_data_to_csv(self, save_item: Dict, store_type: str, offer_type: str):
 
-        Returns: no returns
-
-        """
         pathlib.Path(self.csv_store_path).mkdir(parents=True, exist_ok=True)
-        save_file_name = self.get_file_name(store_type=store_type)
+        save_file_name = self.get_file_name(
+            store_type=store_type, offer_type=offer_type
+        )
         async with aiofiles.open(
             save_file_name, mode="a+", encoding="utf-8-sig", newline=""
         ) as f:
@@ -68,10 +62,14 @@ class FundaCsvStore(AbstractStore):
             await writer.writerow(save_item.values())
 
     async def store_details(self, content: Dict):
-        await self.save_data_to_csv(save_item=content, store_type="detail")
+        await self.save_data_to_csv(
+            save_item=content, store_type="detail", offer_type=config.OFFERING_TYPE
+        )
 
     async def store_listing(self, content: Dict):
-        await self.save_data_to_csv(save_item=content, store_type="listing")
+        await self.save_data_to_csv(
+            save_item=content, store_type="listing", offer_type=config.OFFERING_TYPE
+        )
 
 
 class FundaPgStore(AbstractStore):

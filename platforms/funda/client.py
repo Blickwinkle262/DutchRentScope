@@ -30,7 +30,12 @@ from model.m_search import (
     PriceRange,
     Price,
 )
-from model.m_response import PropertyResponse, Property
+from model.m_response import (
+    PropertyResponse,
+    Property,
+    BuyProperty,
+    BuyPropertyResponse,
+)
 
 logger = logging.getLogger("funda")
 
@@ -130,7 +135,9 @@ class FundaClient:
 
         return await self.post(uri, data=search_params, response_type="json")
 
-    async def parse_single_page_house_info(self, response_data) -> PropertyResponse:
+    async def parse_single_page_house_info(
+        self, response_data, offering_type
+    ) -> PropertyResponse:
 
         try:
             data = Box(response_data, default_box=True, default_box_attr=None)
@@ -146,30 +153,56 @@ class FundaClient:
                     source = hit._source
 
                     # Create Property object using Pydantic
-                    property_obj = Property(
-                        id=source.id,
-                        property_type=source.object_type,
-                        type=source.type,
-                        status=source.status,
-                        zoning=source.zoning,
-                        construction_type=source.construction_type,
-                        floor_area=source.floor_area,
-                        floor_area_range=source.floor_area_range,
-                        plot_area=source.plot_area,
-                        plot_area_range=source.plot_area_range,
-                        number_of_rooms=source.number_of_rooms,
-                        number_of_bedrooms=source.number_of_bedrooms,
-                        energy_label=source.energy_label,
-                        price=source.price,
-                        offering_type=source.offering_type,
-                        address=source.address,
-                        agent=source.agent,
-                        thumbnail_id=source.thumbnail_id,
-                        available_media_types=source.available_media_types,
-                        detail_page_relative_url=source.object_detail_page_relative_url,
-                        publish_date=source.publish_date,
-                        blikvanger=source.blikvanger,
-                    )
+                    if offering_type == OfferingType.rent:
+                        property_obj = Property(
+                            id=source.id,
+                            property_type=source.object_type,
+                            type=source.type,
+                            status=source.status,
+                            zoning=source.zoning,
+                            construction_type=source.construction_type,
+                            floor_area=source.floor_area,
+                            floor_area_range=source.floor_area_range,
+                            plot_area=source.plot_area,
+                            plot_area_range=source.plot_area_range,
+                            number_of_rooms=source.number_of_rooms,
+                            number_of_bedrooms=source.number_of_bedrooms,
+                            energy_label=source.energy_label,
+                            price=source.price,
+                            offering_type=source.offering_type,
+                            address=source.address,
+                            agent=source.agent,
+                            thumbnail_id=source.thumbnail_id,
+                            available_media_types=source.available_media_types,
+                            detail_page_relative_url=source.object_detail_page_relative_url,
+                            publish_date=source.publish_date,
+                            blikvanger=source.blikvanger,
+                        )
+                    else:
+                        property_obj = BuyProperty(
+                            id=source.id,
+                            property_type=source.object_type,
+                            type=source.type,
+                            status=source.status,
+                            zoning=source.zoning,
+                            construction_type=source.construction_type,
+                            floor_area=source.floor_area,
+                            floor_area_range=source.floor_area_range,
+                            plot_area=source.plot_area,
+                            plot_area_range=source.plot_area_range,
+                            number_of_rooms=source.number_of_rooms,
+                            number_of_bedrooms=source.number_of_bedrooms,
+                            energy_label=source.energy_label,
+                            price=source.price,
+                            offering_type=source.offering_type,
+                            address=source.address,
+                            agent=source.agent,
+                            thumbnail_id=source.thumbnail_id,
+                            available_media_types=source.available_media_types,
+                            detail_page_relative_url=source.object_detail_page_relative_url,
+                            publish_date=source.publish_date,
+                            blikvanger=source.blikvanger,
+                        )
                     properties.append(property_obj)
                 except Exception as e:
                     logger.error(
@@ -179,12 +212,18 @@ class FundaClient:
                         extra={"source_data": source, "error_type": type(e).__name__},
                     )
                     continue
-
-            return PropertyResponse(
-                total_value=total.value,
-                total_relation=total.relation,
-                properties=properties,
-            )
+            if offering_type == OfferingType.rent:
+                return PropertyResponse(
+                    total_value=total.value,
+                    total_relation=total.relation,
+                    properties=properties,
+                )
+            else:
+                return BuyPropertyResponse(
+                    total_value=total.value,
+                    total_relation=total.relation,
+                    properties=properties,
+                )
 
         except Exception as e:
             logger.error("Failed to parse property data: %s", str(e), exc_info=True)

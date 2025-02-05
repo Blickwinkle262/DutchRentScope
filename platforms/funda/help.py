@@ -16,7 +16,7 @@ class FundaDetailExtractor:
         pass
 
     @staticmethod
-    async def extract_details(page_content: str) -> HouseDetails:
+    async def extract_details(id, page_content: str) -> HouseDetails:
         selector = Selector(text=page_content)
         house_details = {}
         logger.debug("Starting house details extraction")
@@ -62,7 +62,7 @@ class FundaDetailExtractor:
             else description or ""
         )
 
-        return HouseDetails(**house_details)
+        return HouseDetails(id=id, **house_details)
 
     @staticmethod
     def clean_xpath_result(selector_result, default=""):
