@@ -246,9 +246,8 @@ class FundaCrawler(AbstractCrawler):
                 )
                 if html_content:
                     logger.error(
-                        "--- HTML content for failed extraction [ID: %s] ---\n%s",
+                        "--- HTML content for failed extraction [ID: %s] ---\n",
                         detail.house_id,
-                        html_content,
                     )
                     await utils.save_error_html(
                         city=detail.city,

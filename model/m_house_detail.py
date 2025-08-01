@@ -191,7 +191,7 @@ class HouseDetails:
         """Clean the 'term' (time on market) string."""
         return value.strip() if value else "N/A"
 
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         for key, value in kwargs.items():
             setattr(self, f"_{key}", value)
 
