@@ -178,3 +178,6 @@ house_images/
 logs/
 logs/**
 *.log
+
+# cookie files
+data/*.json
