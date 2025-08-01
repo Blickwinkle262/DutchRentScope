@@ -23,10 +23,14 @@ PRICE_MAX = 3000
 START_PAGE = 1
 END_PAGE = 3
 
-MAX_CONCURRENCY_NUM = 5
+MAX_CONCURRENCY_NUM = 10
 
 # Batch size for processing house details
 BATCH_SIZE = 50
+
+# Cookie Management
+MAX_COOKIE_FAILURE_COUNT = 3  # Max failures before forcing a new cookie
+MAX_COOKIE_UPDATE_LIMIT = 5  # Max total cookie updates before halting
 
 SAVE_DATA_OPTION = "csv"  # support "db" and "csv"
 

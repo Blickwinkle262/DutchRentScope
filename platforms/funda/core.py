@@ -30,6 +30,7 @@ logger = logging.getLogger("funda")
 class HouseDetailReference(NamedTuple):
     house_id: str
     detail_uri: str
+    city: str
 
 
 class FundaCrawler(AbstractCrawler):
@@ -38,6 +39,7 @@ class FundaCrawler(AbstractCrawler):
         self.cookie_manager = funda_cookie_manager
         self.index_url = "https://www.funda.nl/en"
         self._page_extractor = None
+        self.cookie_update_attempts = 0
         if config.SAVE_DATA_OPTION:
             self.store = StoreFactory.create_store(
                 config.SAVE_DATA_OPTION,
@@ -57,7 +59,9 @@ class FundaCrawler(AbstractCrawler):
             listing_results = await self._get_listing_info()
 
             detail_references = [
-                HouseDetailReference(prop.id, prop.detail_page_relative_url)
+                HouseDetailReference(
+                    prop.id, prop.detail_page_relative_url, prop.address.city
+                )
                 for prop in listing_results
             ]
 
@@ -148,13 +152,13 @@ class FundaCrawler(AbstractCrawler):
                 f"Unsupported offering_type for detail extraction: {offering_type}"
             )
 
+        semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
         for i in range(0, len(detail_list), batch_size):
             batch = detail_list[i : i + batch_size]
             logger.info(
                 f"Processing batch {i//batch_size + 1} of {math.ceil(len(detail_list)/batch_size)}..."
             )
 
-            semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
             fetch_tasks = [
                 self._fetch_and_parse_detail(detail, semaphore) for detail in batch
             ]
@@ -191,6 +195,10 @@ class FundaCrawler(AbstractCrawler):
                     id=detail.house_id, page_content=html_content
                 )
 
+                if house_info is None:
+                    # This means the property was pre-filtered (e.g., parking) and should be skipped.
+                    return None
+
                 # Define essential numeric fields that should not be zero
                 essential_fields = ["price"]
 
@@ -217,9 +225,15 @@ class FundaCrawler(AbstractCrawler):
 
             except IPBlockError:
                 logger.warning(
-                    "IP blocked for house ID %s, trying to refresh cookie...",
+                    "IP blocked for house ID %s, reporting failure and attempting to refresh cookie...",
                     detail.house_id,
                 )
+                await self.cookie_manager.report_failure()
+
+                if self.cookie_update_attempts >= config.MAX_COOKIE_UPDATE_LIMIT:
+                    raise Exception("Cookie update limit reached. Halting crawler.")
+
+                self.cookie_update_attempts += 1
                 await self.cookie_manager.get_cookie(force_refresh=True)
                 # We don't retry here, but the next run with a fresh cookie should succeed.
 
@@ -235,6 +249,11 @@ class FundaCrawler(AbstractCrawler):
                         "--- HTML content for failed extraction [ID: %s] ---\n%s",
                         detail.house_id,
                         html_content,
+                    )
+                    await utils.save_error_html(
+                        city=detail.city,
+                        house_id=detail.house_id,
+                        html_content=html_content,
                     )
         return None
 

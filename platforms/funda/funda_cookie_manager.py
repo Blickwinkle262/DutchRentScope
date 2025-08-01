@@ -9,6 +9,7 @@ from playwright.async_api import async_playwright
 
 from base.base_cookie_manager import AbstractCookieManager
 from tools import utils
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class FundaCookieManager(AbstractCookieManager):
         cookie_lifetime: int = 7200,
     ):
         self.cookie_file_path = Path(cookie_file_path)
-        self.cookie_lifetime = cookie_lifetime  # Default lifetime is 1 hour
+        self.cookie_lifetime = cookie_lifetime  # Default lifetime is 2 hours
         self._cookie_data = self._load_cookie()
 
     async def get_cookie(self, force_refresh: bool = False) -> str:
@@ -37,9 +38,24 @@ class FundaCookieManager(AbstractCookieManager):
         self._cookie_data = {
             "cookie_string": new_cookie_string,
             "timestamp": time.time(),
+            "failure_count": 0,
+            "last_failure_timestamp": None,
         }
         self._save_cookie(self._cookie_data)
         return new_cookie_string
+
+    async def report_failure(self):
+        """Reports a failure for the current cookie, incrementing the failure count."""
+        if self._cookie_data:
+            self._cookie_data["failure_count"] = (
+                self._cookie_data.get("failure_count", 0) + 1
+            )
+            self._cookie_data["last_failure_timestamp"] = time.time()
+            self._save_cookie(self._cookie_data)
+            logger.warning(
+                "Reported failure for cookie. New failure count: %d",
+                self._cookie_data["failure_count"],
+            )
 
     def _load_cookie(self) -> Optional[dict]:
         if not self.cookie_file_path.exists():
@@ -91,10 +107,22 @@ class FundaCookieManager(AbstractCookieManager):
         if not self._cookie_data:
             return False
 
+        # Check timestamp
         current_time = time.time()
         cookie_timestamp = self._cookie_data.get("timestamp", 0)
+        if (current_time - cookie_timestamp) >= self.cookie_lifetime:
+            return False
 
-        return (current_time - cookie_timestamp) < self.cookie_lifetime
+        # Check failure count
+        failure_count = self._cookie_data.get("failure_count", 0)
+        if failure_count >= config.MAX_COOKIE_FAILURE_COUNT:
+            logger.warning(
+                "Cookie is considered invalid due to high failure count (%d).",
+                failure_count,
+            )
+            return False
+
+        return True
 
 
 # Create a single, shared instance of the cookie manager

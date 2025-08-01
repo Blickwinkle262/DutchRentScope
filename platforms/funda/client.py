@@ -120,8 +120,11 @@ class FundaClient:
         else:
             price = None
 
+        # Format search areas to be compatible with Funda's API
+        formatted_areas = [area.lower().replace(" ", "-") for area in selected_area]
+
         base_params = SearchParams(
-            selected_area=selected_area,
+            selected_area=formatted_areas,
             offering_type=offering_type,
             publication_date=publication_date,
             availability=availability,
@@ -422,19 +425,17 @@ class FundaPlaywrightClient:
         self.headers["Cookie"] = cookie_str
         self.cookie_dict = cookie_dict
 
-    async def get_house_detail_info(self, uri, semaphore):
-
-        async with semaphore:
-            try:
-                response = await self.get(uri, response_type="html")
-                # logger.info(
-                #     "geting house detail page --------- /n"
-                #     + response
-                #     + "/n ------------------- /n",
-                # )
-                return response
-            except Exception as e:
-                logger.error(
-                    "Error fetching house detail for %s: %s", uri, str(e), exc_info=True
-                )
-                return None
+    async def get_house_detail_info(self, uri):
+        try:
+            response = await self.get(uri, response_type="html")
+            # logger.info(
+            #     "geting house detail page --------- /n"
+            #     + response
+            #     + "/n ------------------- /n",
+            # )
+            return response
+        except Exception as e:
+            logger.error(
+                "Error fetching house detail for %s: %s", uri, str(e), exc_info=True
+            )
+            return None

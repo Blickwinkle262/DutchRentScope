@@ -134,3 +134,13 @@ def setup_logging():
     if queue_handler is not None:
         queue_handler.listener.start()
         atexit.register(queue_handler.listener.stop)
+
+
+async def save_error_html(city: str, house_id: str, html_content: str):
+    """Saves the HTML content of a failed page to a structured directory."""
+    date_str = get_current_date()
+    error_dir = Path(f"data/error_html/{date_str}/{city}")
+    error_dir.mkdir(parents=True, exist_ok=True)
+    file_path = error_dir / f"{house_id}.html"
+    async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+        await f.write(html_content)

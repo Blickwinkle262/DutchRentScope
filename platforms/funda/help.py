@@ -8,6 +8,25 @@ from model.m_house_detail import HouseDetails
 logger = logging.getLogger("funda")
 
 
+def is_parseable_listing(selector: Selector) -> bool:
+    """
+    Performs a pre-check on the HTML to determine if it's a standard, parseable listing.
+    Filters out non-residential properties, projects, and listings with price ranges.
+    """
+    title = selector.xpath("//title/text()").get(default="").lower()
+    non_residential_keywords = ["parking", "garage", "bouwgrond", "project"]
+    if any(keyword in title for keyword in non_residential_keywords):
+        return False
+
+    price_text = selector.xpath(
+        "//div[contains(@class, 'flex-col text-xl')]//*[contains(text(), '€')]/text()"
+    ).get(default="")
+    if "to" in price_text or "Prijzen op aanvraag" in price_text:
+        return False
+
+    return True
+
+
 class BaseFundaDetailExtractor:
     """
     基类，负责加载XPath配置并根据房源状态动态执行提取逻辑。
@@ -24,14 +43,23 @@ class BaseFundaDetailExtractor:
 
     async def extract_details(self, id: str, page_content: str) -> HouseDetails:
         selector = Selector(text=page_content)
+
+        if not is_parseable_listing(selector):
+            logger.info(
+                f"Skipping non-parseable property [ID: {id}] based on pre-check."
+            )
+            return None
+
         house_details = {}
         logger.debug(f"Starting house details extraction for ID: {id}")
 
         # 1. 首先，检查房源状态
         status_xpath = self.config.get("status_check_xpath")
-        status_text = ""
+        status_text = "available"  # Default to available
         if status_xpath:
-            status_text = selector.xpath(status_xpath).get(default="").strip().lower()
+            status_text = (
+                selector.xpath(status_xpath).get(default="available").strip().lower()
+            )
 
         house_details["status"] = status_text.capitalize()
 

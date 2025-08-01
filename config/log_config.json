@@ -22,7 +22,7 @@
         "level": "DEBUG",
         "formatter": "detailed",
         "filename": "logs/my_app.log",
-        "maxBytes": 1000000,
+        "maxBytes": 10000000,
         "backupCount": 3
       }
     },
