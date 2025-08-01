@@ -50,8 +50,9 @@ class HouseDetails:
             return 0
         try:
             # Remove currency and text, handle thousands separator
-            cleaned = value.replace("€", "").replace(".", "").replace(",", "")
-            cleaned = cleaned.split("/")[0].split("p")[0].strip()
+            numeric_part = value.split("€")[-1].strip().split(" ")[0]
+            # Remove thousands separators
+            cleaned = numeric_part.replace(".", "").replace(",", "")
             return float(cleaned)
         except (ValueError, AttributeError):
             return 0
@@ -174,6 +175,21 @@ class HouseDetails:
     @ItemDescriptor(str)
     def description(self, value):
         return " ".join(value.split())
+
+    @ItemDescriptor(str)
+    def listed_since(self, value):
+        """Clean the 'listed since' date string."""
+        return value.strip() if value else "N/A"
+
+    @ItemDescriptor(str)
+    def date_of_rental(self, value):
+        """Clean the 'date of rental/sale' string."""
+        return value.strip() if value else "N/A"
+
+    @ItemDescriptor(str)
+    def term(self, value):
+        """Clean the 'term' (time on market) string."""
+        return value.strip() if value else "N/A"
 
     def __init__(self, **kwargs):
         for key, value in kwargs.items():

@@ -25,6 +25,9 @@ END_PAGE = 3
 
 MAX_CONCURRENCY_NUM = 5
 
+# Batch size for processing house details
+BATCH_SIZE = 50
+
 SAVE_DATA_OPTION = "csv"  # support "db" and "csv"
 
 POSTGRES_DSN = ""

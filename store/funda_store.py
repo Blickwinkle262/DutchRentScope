@@ -37,39 +37,30 @@ def calculate_number_of_files(file_store_path: str) -> int:
 
 
 class FundaCsvStore(AbstractStore):
-    csv_store_path: str = "data/funda"
+    def __init__(self, offering_type: str, search_areas: list[str]):
+        self.date_folder = pathlib.Path(f"data/{utils.get_current_date()}")
+        self.date_folder.mkdir(parents=True, exist_ok=True)
 
-    def __init__(self):
-        pathlib.Path(self.csv_store_path).mkdir(parents=True, exist_ok=True)
-
-    def get_file_name(self, store_type, offer_type):
-        file_count = calculate_number_of_files(self.csv_store_path)
-        return f"{self.csv_store_path}/{file_count}_{store_type}_{offer_type}_{utils.get_current_date()}.csv"
-
-    async def save_data_to_csv(self, save_item: Dict, store_type: str, offer_type: str):
-
-        pathlib.Path(self.csv_store_path).mkdir(parents=True, exist_ok=True)
-        save_file_name = self.get_file_name(
-            store_type=store_type, offer_type=offer_type
+        area_str = "_".join(search_areas).lower()
+        self.listing_file = (
+            self.date_folder / f"{offering_type}_{area_str}_listings.csv"
         )
+        self.detail_file = self.date_folder / f"{offering_type}_{area_str}_details.csv"
+
+    async def _save_to_csv(self, file_path: pathlib.Path, item: Dict):
         async with aiofiles.open(
-            save_file_name, mode="a+", encoding="utf-8-sig", newline=""
+            file_path, mode="a+", encoding="utf-8-sig", newline=""
         ) as f:
-            f.fileno()
             writer = csv.writer(f)
             if await f.tell() == 0:
-                await writer.writerow(save_item.keys())
-            await writer.writerow(save_item.values())
-
-    async def store_details(self, content: Dict):
-        await self.save_data_to_csv(
-            save_item=content, store_type="detail", offer_type=config.OFFERING_TYPE
-        )
+                await writer.writerow(item.keys())
+            await writer.writerow(item.values())
 
     async def store_listing(self, content: Dict):
-        await self.save_data_to_csv(
-            save_item=content, store_type="listing", offer_type=config.OFFERING_TYPE
-        )
+        await self._save_to_csv(self.listing_file, content)
+
+    async def store_details(self, content: Dict):
+        await self._save_to_csv(self.detail_file, content)
 
 
 class FundaPgStore(AbstractStore):
@@ -107,6 +98,12 @@ class FundaPgStore(AbstractStore):
         except Exception as e:
             raise
 
+    async def store_image(self, content: Dict):
+        try:
+            await add_new_image(content)
+        except Exception as e:
+            raise
+
 
 class StoreFactory:
     STORES = {
@@ -114,10 +111,10 @@ class StoreFactory:
     }
 
     @staticmethod
-    def create_store(method: str) -> AbstractStore:
-        crawler_class = StoreFactory.STORES.get(method)
-        if not crawler_class:
+    def create_store(method: str, **kwargs) -> AbstractStore:
+        store_class = StoreFactory.STORES.get(method)
+        if not store_class:
             raise ValueError(
-                "Invalid Media Platform Currently only supported funda, and ..."
+                f"Invalid store method: {method}. Supported methods are: {list(StoreFactory.STORES.keys())}"
             )
-        return crawler_class()
+        return store_class(**kwargs)

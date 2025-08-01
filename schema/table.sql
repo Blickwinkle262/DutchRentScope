@@ -95,7 +95,15 @@ CREATE TABLE property_details (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create function to automatically update the updated_at timestamp
+CREATE TABLE house_images (
+    id SERIAL PRIMARY KEY,
+    house_id INTEGER REFERENCES property_details(property_id),
+    image_url VARCHAR(1024),
+    local_path VARCHAR(1024),
+    downloaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create function to automatically update the updated_at column
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -112,5 +120,10 @@ CREATE TRIGGER update_property_listings_updated_at
 
 CREATE TRIGGER update_property_details_updated_at
     BEFORE UPDATE ON property_details
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_house_images_updated_at
+    BEFORE UPDATE ON house_images
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();

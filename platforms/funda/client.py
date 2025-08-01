@@ -16,7 +16,7 @@ from playwright.async_api import BrowserContext, Page
 
 from tools import utils
 
-from .exception import DataFetchError
+from .exception import DataFetchError, PaginationLimitError, EmptyResponseError
 from model.m_search import (
     SearchParamsCollection,
     SearchParams,
@@ -66,11 +66,14 @@ class FundaClient:
 
         if response_type:
             if response_type == "html":
+                logger.info(response.text())
                 return response.text
             elif response_type == "json":
+
                 return response.json()
 
         else:  # 默认返回文本
+            logger.info(response.text())
             return response.text
 
     async def post(self, uri: str, data: dict, headers=None, **kwargs) -> Dict:
@@ -82,7 +85,7 @@ class FundaClient:
             "\n".join(json.dumps(item, separators=(",", ":")) for item in data) + "\n"
         )
         url = f"{self._house_info_api_host}{uri}"
-        logger.debug(url)
+        logger.info(url)
         return await self.request(
             method="POST",
             url=url,
@@ -131,25 +134,116 @@ class FundaClient:
         )
 
         search_params = SearchParamsCollection(base_params=base_params).to_list()
-        logger.debug(f"construct search_params {search_params}")
+        logger.info(f"construct search_params {search_params}")
 
         return await self.post(uri, data=search_params, response_type="json")
 
     async def parse_single_page_house_info(
         self, response_data, offering_type
     ) -> PropertyResponse:
+        """
+        Parse API response data into PropertyResponse objects with robust error handling.
 
+        Args:
+            response_data: Raw API response data
+            offering_type: Type of offering (rent/buy)
+
+        Returns:
+            PropertyResponse: Parsed property data or empty response on error
+
+        Raises:
+            EmptyResponseError: When API returns invalid response structure
+            PaginationLimitError: When pagination limit is exceeded
+        """
         try:
+            # Validate response data exists
+            if not response_data:
+                logger.error("Received empty response data")
+                raise EmptyResponseError("API returned empty response data")
+
             data = Box(response_data, default_box=True, default_box_attr=None)
 
-            # Get first response's hits using attribute access
-            hits_data = data.responses[0].hits
+            # Validate response structure
+            if not hasattr(data, "responses") or not data.responses:
+                logger.error("Invalid response structure: missing 'responses' field")
+                logger.debug("Response data structure: %s", response_data)
+                raise EmptyResponseError(
+                    "Invalid response structure: missing 'responses' field"
+                )
+
+            # Check if we have at least one response
+            if len(data.responses) == 0:
+                logger.error("Empty responses array in API response")
+                raise EmptyResponseError("Empty responses array in API response")
+
+            first_response = data.responses[0]
+
+            # Critical fix: Check if hits exists and is not None
+            if not hasattr(first_response, "hits") or first_response.hits is None:
+                logger.error(
+                    "No 'hits' field in API response - possible pagination limit exceeded"
+                )
+                logger.debug("First response structure: %s", first_response)
+
+                # Check if this might be a pagination limit issue
+                # Elasticsearch typically returns this structure when max_result_window is exceeded
+                if hasattr(first_response, "error") or "error" in str(first_response):
+                    raise PaginationLimitError(
+                        "Search pagination limit exceeded. Try reducing page range or using more specific search criteria."
+                    )
+                else:
+                    raise EmptyResponseError("API response missing 'hits' field")
+
+            hits_data = first_response.hits
+
+            # Validate hits structure
+            if not hasattr(hits_data, "total") or hits_data.total is None:
+                logger.error("Invalid hits structure: missing 'total' field")
+                raise EmptyResponseError(
+                    "Invalid hits structure: missing 'total' field"
+                )
+
+            if not hasattr(hits_data, "hits") or hits_data.hits is None:
+                logger.warning("No property listings found in response")
+                # Return empty response with total info if available
+                total_value = (
+                    getattr(hits_data.total, "value", 0)
+                    if hasattr(hits_data.total, "value")
+                    else 0
+                )
+                total_relation = (
+                    getattr(hits_data.total, "relation", "eq")
+                    if hasattr(hits_data.total, "relation")
+                    else "eq"
+                )
+
+                if offering_type == OfferingType.rent:
+                    return PropertyResponse(
+                        total_value=total_value,
+                        total_relation=total_relation,
+                        properties=[],
+                    )
+                else:
+                    return BuyPropertyResponse(
+                        total_value=total_value,
+                        total_relation=total_relation,
+                        properties=[],
+                    )
+
             total = hits_data.total
             listings = hits_data.hits
+
+            logger.info(
+                "Processing %d property listings from API response", len(listings)
+            )
 
             properties = []
             for hit in listings:
                 try:
+                    if not hasattr(hit, "_source") or hit._source is None:
+                        logger.warning("Skipping hit with missing '_source' field")
+                        continue
+
                     source = hit._source
 
                     # Create Property object using Pydantic
@@ -206,12 +300,24 @@ class FundaClient:
                     properties.append(property_obj)
                 except Exception as e:
                     logger.error(
-                        "Failed to parse property [ID: %s]",
-                        hit.get("_id", "unknown"),
+                        "Failed to parse property [ID: %s]: %s",
+                        getattr(hit, "_id", "unknown"),
+                        str(e),
                         exc_info=True,
-                        extra={"source_data": source, "error_type": type(e).__name__},
+                        extra={
+                            "source_data": getattr(hit, "_source", None),
+                            "error_type": type(e).__name__,
+                        },
                     )
                     continue
+
+            logger.info(
+                "Successfully parsed %d out of %d properties",
+                len(properties),
+                len(listings),
+            )
+
+            # Create and return appropriate response object
             if offering_type == OfferingType.rent:
                 return PropertyResponse(
                     total_value=total.value,
@@ -225,9 +331,22 @@ class FundaClient:
                     properties=properties,
                 )
 
+        except (PaginationLimitError, EmptyResponseError):
+            # Re-raise specific exceptions to be handled by caller
+            raise
         except Exception as e:
             logger.error("Failed to parse property data: %s", str(e), exc_info=True)
-            return PropertyResponse()
+            logger.debug("Raw response data: %s", response_data)
+
+            # Return empty response instead of crashing
+            if offering_type == OfferingType.rent:
+                return PropertyResponse(
+                    total_value=0, total_relation="eq", properties=[]
+                )
+            else:
+                return BuyPropertyResponse(
+                    total_value=0, total_relation="eq", properties=[]
+                )
 
 
 class FundaPlaywrightClient:
@@ -304,9 +423,15 @@ class FundaPlaywrightClient:
         self.cookie_dict = cookie_dict
 
     async def get_house_detail_info(self, uri, semaphore):
+
         async with semaphore:
             try:
                 response = await self.get(uri, response_type="html")
+                # logger.info(
+                #     "geting house detail page --------- /n"
+                #     + response
+                #     + "/n ------------------- /n",
+                # )
                 return response
             except Exception as e:
                 logger.error(

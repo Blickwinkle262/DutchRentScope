@@ -1,69 +1,90 @@
-import html
+# help.py
 import json
-import re
 import logging
-from typing import Dict, List, Tuple, Any
-
+from pathlib import Path
 from parsel import Selector
-
 from model.m_house_detail import HouseDetails
 
 logger = logging.getLogger("funda")
 
 
-class FundaDetailExtractor:
-    def __init__(self):
-        pass
+class BaseFundaDetailExtractor:
+    """
+    基类，负责加载XPath配置并根据房源状态动态执行提取逻辑。
+    """
 
-    @staticmethod
-    async def extract_details(id, page_content: str) -> HouseDetails:
+    def __init__(self, config_path: Path, extractor_type: str):
+        self.extractor_type = extractor_type
+        with open(config_path, "r") as f:
+            # 加载特定类型的所有配置（包括common, available, rented等）
+            self.config = json.load(f)[self.extractor_type]
+        logger.info(
+            f"Initialized {self.__class__.__name__} with '{self.extractor_type}' configurations."
+        )
+
+    async def extract_details(self, id: str, page_content: str) -> HouseDetails:
         selector = Selector(text=page_content)
         house_details = {}
-        logger.debug("Starting house details extraction")
-        xpath_mappings = {
-            "price": "//div[@class='flex flex-col text-xl']/div/text()",
-            "deposit": "//dt[contains(text(), 'Deposit')]/following-sibling::dd[1]/text()",
-            "living_area": """(
-                //li[.//svg[contains(@viewBox, '48')]]/span[@class='md:font-bold']/text()
-                |
-                //dt[contains(text(), 'Living area')]/following-sibling::dd[1]/text()
-            )[1]""",
-            "external_area": "//dt[contains(text(), 'Exterior space attached to the building')]/following-sibling::dd[1]/text()",
-            "volume": "//dt[contains(text(), 'Volume in cubic meters')]/following-sibling::dd[1]/text()",
-            "construction_year": "//dt[contains(text(), 'Year of construction')]/following-sibling::dd[1]/text()",
-            "house_type": "//dt[contains(text(), 'Type apartment')]/following-sibling::dd[1]/text()",
-            "energy_label": "//span[contains(@class, 'inline-block px-2 text-center text-white')]/text()",
-            "balcony": "//dt[contains(text(), 'Balcony/roof terrace')]/following-sibling::dd[1]/text()",
-            "storage": "//dt[contains(text(), 'Shed / storage')]/following-sibling::dd[1]/text()",
-            "parking": "//dt[contains(text(), 'Type of parking facilities')]/following-sibling::dd[1]/text()",
-            "status": "//dt[contains(text(), 'Status')]/following-sibling::dd[1]/text()",
-            "insulation": """normalize-space(
-                //dt[contains(text(), 'Insulation')]/following-sibling::dd[1]/text()
-            )""",
-            "heating": """normalize-space(
-                //dt[contains(text(), 'Heating')]/following-sibling::dd[1]/text()
-            )""",
-            "hot_water": """normalize-space(
-                //dt[contains(text(), 'Hot water')]/following-sibling::dd[1]/text()
-            )""",
-        }
+        logger.debug(f"Starting house details extraction for ID: {id}")
 
+        # 1. 首先，检查房源状态
+        status_xpath = self.config.get("status_check_xpath")
+        status_text = ""
+        if status_xpath:
+            status_text = selector.xpath(status_xpath).get(default="").strip().lower()
+
+        house_details["status"] = status_text.capitalize()
+
+        # 2. 根据状态动态构建最终的XPath映射
+        xpath_mappings = self.config["common"].copy()
+        if "available" in status_text:
+            xpath_mappings.update(self.config["available"])
+            logger.debug(
+                f"Property ID {id} is Available. Using 'available' specific XPaths."
+            )
+        elif "rented" in status_text or "sold" in status_text:
+            state_key = "rented" if "rented" in status_text else "sold"
+            if state_key in self.config:
+                xpath_mappings.update(self.config[state_key])
+                logger.debug(
+                    f"Property ID {id} is {state_key}. Using '{state_key}' specific XPaths."
+                )
+        else:  # 如果状态未知或为空，可以尝试使用 available 作为默认
+            if "available" in self.config:
+                xpath_mappings.update(self.config["available"])
+                logger.warning(
+                    f"Property ID {id} has an unknown status ('{status_text}'). Defaulting to 'available' XPaths."
+                )
+
+        # 3. 循环提取所有适用的字段
         for field, xpath in xpath_mappings.items():
-            house_details[field] = selector.xpath(xpath).get()
-        description = selector.xpath(
-            "//div[@data-headlessui-state and contains(@class,'listing-description-text')]/text()"
+            # 确保不重复提取已经获取的状态字段
+            if field != "status":
+                house_details[field] = selector.xpath(xpath).get()
+
+        # 描述的提取逻辑保持不变
+        description_parts = selector.xpath(
+            "//div[@data-headlessui-state and contains(@class,'listing-description-text')]/descendant::*/text()"
         ).getall()
+        description = " ".join(
+            part.strip() for part in description_parts if part.strip()
+        )
         if not description:
             description = selector.xpath("//meta[@name='description']/@content").get()
-
-        house_details["description"] = (
-            " ".join(description).strip()
-            if isinstance(description, list)
-            else description or ""
-        )
+        house_details["description"] = description or ""
 
         return HouseDetails(id=id, **house_details)
 
-    @staticmethod
-    def clean_xpath_result(selector_result, default=""):
-        return selector_result.get() if selector_result else default
+
+class FundaBuyExtractor(BaseFundaDetailExtractor):
+    """专门用于提取购买房源信息的类"""
+
+    def __init__(self, config_path: Path = Path("config/config_xpaths.json")):
+        super().__init__(config_path, "buy")
+
+
+class FundaRentExtractor(BaseFundaDetailExtractor):
+    """专门用于提取租赁房源信息的类"""
+
+    def __init__(self, config_path: Path = Path("config/config_xpaths.json")):
+        super().__init__(config_path, "rent")

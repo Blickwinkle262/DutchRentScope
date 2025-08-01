@@ -58,6 +58,23 @@ async def update_listing_by_id(property_id: int, listing_item: Dict) -> int:
     return int(result.split()[-1])
 
 
+async def add_new_image(image_item: Dict) -> int:
+    db = get_db()
+    columns = list(image_item.keys())
+    placeholders = [f"${i+1}" for i in range(len(columns))]
+    values = list(image_item.values())
+
+    sql = f"""
+        INSERT INTO house_images ({', '.join(columns)})
+        VALUES ({', '.join(placeholders)})
+        ON CONFLICT (image_url) DO NOTHING
+        RETURNING id
+    """
+
+    result = await db.query(sql, *values)
+    return result[0]["id"] if result else 0
+
+
 # Similar functions for property details
 async def query_detail_by_id(property_id: int) -> Dict:
     db = get_db()

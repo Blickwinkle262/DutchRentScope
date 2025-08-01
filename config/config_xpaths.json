@@ -1,0 +1,52 @@
+{
+  "buy": {
+    "status_check_xpath": "//dt[contains(text(), 'Status')]/following-sibling::dd/span/text()",
+    "common": {
+      "price": "//div[contains(@class, 'flex-col text-xl')]//*[contains(text(), '€')]/text()",
+      "living_area": "(//span[contains(text(), 'living area')]/preceding-sibling::span/text() | //dt[contains(text(), 'Living area')]/following-sibling::dd/span/text())[1]",
+      "external_area": "//dt[contains(text(), 'Exterior space attached to the building')]/following-sibling::dd/span/text()",
+      "volume": "//dt[contains(text(), 'Volume in cubic meters')]/following-sibling::dd/span/text()",
+      "construction_year": "//dt[contains(text(), 'Year of construction')]/following-sibling::dd/span/text()",
+      "house_type": "//dt[contains(text(), 'Kind of house')]/following-sibling::dd/span/text()",
+      "energy_label": "//span[contains(text(), 'energy label')]/preceding-sibling::span/text() | //dt[translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='energy label']/following-sibling::dd//span/text()",
+      "balcony": "//dt[contains(text(), 'Balcony/roof terrace')]/following-sibling::dd/span/text()",
+      "storage": "//dt[contains(text(), 'Shed / storage')]/following-sibling::dd/span/text()",
+      "parking": "//dt[contains(text(), 'Type of parking facilities')]/following-sibling::dd/span/text()",
+      "insulation": "normalize-space(//dt[contains(text(), 'Insulation')]/following-sibling::dd/span/text())",
+      "heating": "normalize-space(//dt[contains(text(), 'Heating')]/following-sibling::dd/span/text())",
+      "hot_water": "normalize-space(//dt[contains(text(), 'Hot water')]/following-sibling::dd/span/text())"
+    },
+    "available": {
+    },
+    "sold": {
+      "listed_since": "//dt[contains(text(), 'Listed since')]/following-sibling::dd/text()",
+      "date_of_rental": "//dt[contains(text(), 'Date of sale')]/following-sibling::dd/text()",
+      "term": "//dt[contains(text(), 'Term')]/following-sibling::dd/text()"
+    }
+  },
+  "rent": {
+    "status_check_xpath": "//dt[contains(text(), 'Status')]/following-sibling::dd/span/text()",
+    "common": {
+      "price": "//div[contains(@class, 'flex-col text-xl')]//*[contains(text(), '€')]/text()",
+      "living_area": "(//span[contains(text(), 'living area')]/preceding-sibling::span/text() | //dt[contains(text(), 'Living area')]/following-sibling::dd/span/text())[1]",
+      "volume": "//dt[contains(text(), 'Volume in cubic meters')]/following-sibling::dd/span/text()",
+      "construction_year": "//dt[contains(text(), 'Year of construction')]/following-sibling::dd/span/text()",
+      "house_type": "(//dt[contains(text(), 'Kind of house')]/following-sibling::dd/span/text() | //dt[contains(text(), 'Type apartment')]/following-sibling::dd/span/text())[1]",
+      "energy_label": "//span[contains(text(), 'energy label')]/preceding-sibling::span/text() | //dt[translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='energy label']/following-sibling::dd//span/text()",
+      "balcony": "//dt[contains(text(), 'Balcony/roof terrace')]/following-sibling::dd/span/text()",
+      "storage": "//dt[contains(text(), 'Shed / storage')]/following-sibling::dd/span/text()",
+      "parking": "//dt[contains(text(), 'Type of parking facilities')]/following-sibling::dd/span/text()",
+      "insulation": "normalize-space(//dt[contains(text(), 'Insulation')]/following-sibling::dd/span/text())",
+      "heating": "normalize-space(//dt[contains(text(), 'Heating')]/following-sibling::dd/span/text())",
+      "hot_water": "normalize-space(//dt[contains(text(), 'Hot water')]/following-sibling::dd/span/text())"
+    },
+    "available": {
+      "deposit": "//dt[contains(text(), 'Deposit')]/following-sibling::dd/span/text()"
+    },
+    "rented": {
+      "listed_since": "//dt[contains(text(), 'Listed since')]/following-sibling::dd/text()",
+      "date_of_rental": "//dt[contains(text(), 'Date of rental')]/following-sibling::dd/text()",
+      "term": "//dt[contains(text(), 'Term')]/following-sibling::dd/text()"
+    }
+  }
+}

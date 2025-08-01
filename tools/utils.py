@@ -42,33 +42,15 @@ def get_user_agent() -> str:
 
 
 def convert_cookies(
-    cookies: Optional[List[Cookie]], required_cookie_keys: Set[str] = None
+    cookies: Optional[List[Cookie]],
 ) -> Tuple[str, Dict]:
     if not cookies:
         return "", {}
 
-    if required_cookie_keys:
-        filtered_cookies = [
-            cookie
-            for cookie in cookies
-            if cookie.get("name", cookie.get("names", "")) in required_cookie_keys
-        ]
-
-        cookies_str = ";".join(
-            [
-                f"{cookie.get('name')}={cookie.get('value')}"
-                for cookie in filtered_cookies
-            ]
-        )
-
-        cookie_dict = {
-            cookie.get("name"): cookie.get("value") for cookie in filtered_cookies
-        }
-    else:
-        cookies_str = ";".join(
-            [f"{cookie.get('name')}={cookie.get('value')}" for cookie in cookies]
-        )
-        cookie_dict = {cookie.get("name"): cookie.get("value") for cookie in cookies}
+    cookies_str = "; ".join(
+        [f"{cookie.get('name')}={cookie.get('value')}" for cookie in cookies]
+    )
+    cookie_dict = {cookie.get("name"): cookie.get("value") for cookie in cookies}
 
     return cookies_str, cookie_dict
 
