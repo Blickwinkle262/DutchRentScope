@@ -44,6 +44,11 @@ logger = logging.getLogger("funda")
 
 
 class FundaClient:
+    def _format_search_params_for_logging(self, params: SearchParams) -> str:
+        """Formats SearchParams into a concise, readable string for logging."""
+        page_num = (params.page.from_ // 15) + 1
+        return f"Fetching page {page_num} for '{params.offering_type.value}' in {params.selected_area}"
+
     def __init__(self, timeout=10, proxy=None, *, headers: Dict[str, str]):
         self.proxy = proxy
         self.timeout = timeout
@@ -85,7 +90,6 @@ class FundaClient:
             "\n".join(json.dumps(item, separators=(",", ":")) for item in data) + "\n"
         )
         url = f"{self._house_info_api_host}{uri}"
-        logger.info(url)
         return await self.request(
             method="POST",
             url=url,
@@ -94,52 +98,27 @@ class FundaClient:
             **kwargs,
         )
 
-    async def get_single_page_house_info(
-        self,
-        selected_area: List[str],
-        offering_type: OfferingType,
-        price_range: PriceRange,
-        page: int = 1,
-        free_text_search: str = "",
-        energy_labels: List[EnergyLabel] = None,
-        availability: Optional[List[Availability]] = None,
-        publication_date: PublicationDate = PublicationDate.NO_PREFERENCE,
-        zoning: Optional[List[ZoningType]] = None,
-        construction_period: Optional[List[ConstructionPeriod]] = None,
-    ) -> Dict:
+    async def get_single_page_house_info(self, search_params: SearchParams) -> Dict:
         """
-        pass
+        Fetches a single page of house listings based on the provided search parameters.
         """
         uri = "/_msearch/template"
 
-        from_index = (page - 1) * 15
-        if offering_type == OfferingType.rent:
-            price = Price(rent_price=price_range)
-        elif offering_type == OfferingType.buy:
-            price = Price(selling_price=price_range)
-        else:
-            price = None
+        # The page number is now managed inside the SearchParams object.
+        # We just need to ensure the 'from' is calculated correctly before this call if needed,
+        # but the core logic in FundaCrawler already handles this.
 
         # Format search areas to be compatible with Funda's API
-        formatted_areas = [area.lower().replace(" ", "-") for area in selected_area]
+        if search_params.selected_area:
+            search_params.selected_area = [
+                area.lower().replace(" ", "-") for area in search_params.selected_area
+            ]
 
-        base_params = SearchParams(
-            selected_area=formatted_areas,
-            offering_type=offering_type,
-            publication_date=publication_date,
-            availability=availability,
-            free_text_search=free_text_search,
-            page=Page(from_=from_index),
-            construction_period=construction_period,
-            zoning=zoning,
-            energy_labels=energy_labels,
-            price=price,
-        )
+        # The SearchParams object is now the single source of truth.
+        logger.info(self._format_search_params_for_logging(search_params))
+        search_payload = SearchParamsCollection(base_params=search_params).to_list()
 
-        search_params = SearchParamsCollection(base_params=base_params).to_list()
-        logger.info(f"construct search_params {search_params}")
-
-        return await self.post(uri, data=search_params, response_type="json")
+        return await self.post(uri, data=search_payload, response_type="json")
 
     async def parse_single_page_house_info(
         self, response_data, offering_type
@@ -236,7 +215,7 @@ class FundaClient:
             total = hits_data.total
             listings = hits_data.hits
 
-            logger.info(
+            logger.debug(
                 "Processing %d property listings from API response", len(listings)
             )
 
@@ -314,7 +293,7 @@ class FundaClient:
                     )
                     continue
 
-            logger.info(
+            logger.debug(
                 "Successfully parsed %d out of %d properties",
                 len(properties),
                 len(listings),
@@ -397,7 +376,7 @@ class FundaPlaywrightClient:
         self, uri: str, params=None, headers=None, **kwargs
     ) -> Union[Response, etree._Element]:
         url = self._host + uri  # Combine host and URI *only* here
-        logger.info("fetching %s", url)
+        logger.debug("fetching %s", url)
 
         if params:
             url += "?" + urlencode(params)  # More concise way to add parameters
@@ -428,11 +407,6 @@ class FundaPlaywrightClient:
     async def get_house_detail_info(self, uri):
         try:
             response = await self.get(uri, response_type="html")
-            # logger.info(
-            #     "geting house detail page --------- /n"
-            #     + response
-            #     + "/n ------------------- /n",
-            # )
             return response
         except Exception as e:
             logger.error(

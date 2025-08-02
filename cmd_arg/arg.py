@@ -1,4 +1,5 @@
 import argparse
+from model.m_search import Availability, ConstructionPeriod
 
 import config
 
@@ -17,16 +18,16 @@ async def parse_cmd():
     parser.add_argument(
         "--crawl_type",
         type=str,
-        help="choose between listing and detail, detail will continue crawl detail page and get more info",
-        choices=["detail", "listing"],
+        help="choose between listing, detail and update. detail will continue crawl detail page and get more info, update will only re-crawl available listings from db",
+        choices=["detail", "listing", "update"],
         default=config.FUNDA_CRAWL_TYPE,
     )
     parser.add_argument(
         "--search_areas",
         type=str,
         nargs="+",
-        help="areas for searching like amsterdam, rotterdam",
-        default=config.SEARCH_AREAS,
+        help="areas for searching like amsterdam, rotterdam. Not required for 'update' mode.",
+        default=None,
     )
     parser.add_argument(
         "--download_img",
@@ -73,18 +74,56 @@ async def parse_cmd():
         choices=["buy", "rent"],
         default=config.OFFERING_TYPE,
     )
+    parser.add_argument(
+        "--availability",
+        type=str,
+        nargs="+",
+        choices=[item.value for item in Availability],
+        default=None,
+        help="Filter by availability status (e.g., available, negotiations)",
+    )
+    parser.add_argument(
+        "--construction-period",
+        type=str,
+        nargs="+",
+        choices=[item.value for item in ConstructionPeriod],
+        default=None,
+        help="Filter by construction period (e.g., after_2020)",
+    )
+    parser.add_argument(
+        "--run-etl",
+        action="store_true",
+        help="Run the ETL process to manage the active listings queue and then exit.",
+        default=False,
+    )
 
     def validate_price_range(args):
         if args.min_price is not None and args.max_price is not None:
             if args.min_price > args.max_price:
                 parser.error("min_price cannot be greater than max_price")
 
+    def validate_update_mode(args):
+        if args.crawl_type == "update":
+            if args.save_option != "db":
+                parser.error("--crawl_type 'update' requires --save_option 'db'")
+
+    def validate_search_areas(args):
+        if args.crawl_type in ["listing", "detail"] and not args.search_areas:
+            # Use default from config if not provided for listing/detail modes
+            args.search_areas = config.SEARCH_AREAS
+            if not args.search_areas:
+                parser.error(
+                    "--search_areas is required for 'listing' and 'detail' modes."
+                )
+
     args = parser.parse_args()
     validate_price_range(args)
+    validate_update_mode(args)
+    validate_search_areas(args)
 
     # override config
     config.PLATFORM = args.platform
-    config.SEARCH_AREAS = args.search_areas
+    config.SEARCH_AREAS = args.search_areas or []
     config.DOWNLOAD_IMAGES = args.download_img
     config.IMAGE_SIZE = args.image_size
     config.PRICE_MIN = args.min_price
@@ -94,3 +133,6 @@ async def parse_cmd():
     config.SAVE_DATA_OPTION = args.save_option
     config.FUNDA_CRAWL_TYPE = args.crawl_type
     config.OFFERING_TYPE = args.offering_type
+    config.AVAILABILITY = args.availability
+    config.CONSTRUCTION_PERIOD = args.construction_period
+    config.RUN_ETL = args.run_etl

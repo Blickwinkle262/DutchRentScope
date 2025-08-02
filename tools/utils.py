@@ -7,6 +7,7 @@ import random
 import time
 import aiohttp
 from pathlib import Path
+from bs4 import BeautifulSoup
 
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple, Set
@@ -95,7 +96,7 @@ async def download_single_image(
                 return True
             return False
     except Exception as e:
-        print(f"Error downloading {url}: {str(e)}")
+        logging.error(f"Error downloading {url}: {str(e)}")
         return False
 
 
@@ -144,3 +145,22 @@ async def save_error_html(city: str, house_id: str, html_content: str):
     file_path = error_dir / f"{house_id}.html"
     async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
         await f.write(html_content)
+
+
+def clean_html_content(html_content: str) -> str:
+    """
+    Cleans the HTML content by removing script and style tags and returning only the body.
+    """
+    if not html_content:
+        return ""
+    try:
+        soup = BeautifulSoup(html_content, "lxml")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        body = soup.find("body")
+        if body:
+            return str(body)
+        return str(soup)
+    except Exception as e:
+        logging.error(f"Error cleaning HTML: {e}")
+        return html_content

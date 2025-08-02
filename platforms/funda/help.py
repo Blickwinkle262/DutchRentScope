@@ -3,7 +3,8 @@ import json
 import logging
 from pathlib import Path
 from parsel import Selector
-from model.m_house_detail import HouseDetails
+from typing import Optional
+from model.m_house_detail import HouseDetail
 
 logger = logging.getLogger("funda")
 
@@ -41,7 +42,9 @@ class BaseFundaDetailExtractor:
             f"Initialized {self.__class__.__name__} with '{self.extractor_type}' configurations."
         )
 
-    async def extract_details(self, id: str, page_content: str) -> HouseDetails:
+    async def extract_details(
+        self, id: str, page_content: str
+    ) -> Optional[HouseDetail]:
         selector = Selector(text=page_content)
 
         if not is_parseable_listing(selector):
@@ -101,7 +104,12 @@ class BaseFundaDetailExtractor:
             description = selector.xpath("//meta[@name='description']/@content").get()
         house_details["description"] = description or ""
 
-        return HouseDetails(id=id, **house_details)
+        try:
+            return HouseDetail(id=id, **house_details)
+        except Exception as e:
+            logger.error(f"Failed to instantiate HouseDetail for ID {id}: {e}")
+            logger.error(f"Data passed to constructor: {house_details}")
+            return None
 
 
 class FundaBuyExtractor(BaseFundaDetailExtractor):

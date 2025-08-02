@@ -140,7 +140,7 @@ class Property(BaseModel):
             "address_postal_code": self.address.postal_code,
             "address_is_bag": self.address.is_bag_address,
             # Agent (first agent if exists)
-            "agent_name": self.agent[0] if self.agent else None,
+            "agent_name": self.agent[0].name if self.agent else None,
             # Media and URLs
             "detail_url": self.detail_page_relative_url,
             "media_types": (

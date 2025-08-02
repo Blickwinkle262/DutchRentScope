@@ -20,7 +20,16 @@ from tools import utils
 from .client import FundaClient, FundaPlaywrightClient
 from .exception import PaginationLimitError, EmptyResponseError, IPBlockError
 from .funda_cookie_manager import funda_cookie_manager
-from model.m_search import OfferingType, PriceRange
+from model.m_search import (
+    OfferingType,
+    PriceRange,
+    SearchParams,
+    Page,
+    Price,
+    Availability,
+    ConstructionPeriod,
+)
+from model.m_house_detail import HouseDetail
 from .help import FundaBuyExtractor, FundaRentExtractor
 from store import StoreFactory
 
@@ -31,15 +40,69 @@ class HouseDetailReference(NamedTuple):
     house_id: str
     detail_uri: str
     city: str
+    listing_record_id: Optional[int] = None
 
 
 class FundaCrawler(AbstractCrawler):
+    def _build_search_params(self, page_num: int) -> SearchParams:
+        """Builds the SearchParams object from config."""
+        price = None
+        if config.PRICE_MIN is not None or config.PRICE_MAX is not None:
+            price = Price(
+                rent_price=(
+                    PriceRange(config.PRICE_MIN, config.PRICE_MAX)
+                    if config.OFFERING_TYPE == "rent"
+                    else None
+                ),
+                selling_price=(
+                    PriceRange(config.PRICE_MIN, config.PRICE_MAX)
+                    if config.OFFERING_TYPE == "buy"
+                    else None
+                ),
+            )
+
+        # Convert string values from config to Enum members if they exist
+        availability_enums = (
+            [Availability(item) for item in config.AVAILABILITY]
+            if config.AVAILABILITY
+            else None
+        )
+        construction_period_enums = (
+            [ConstructionPeriod(item) for item in config.CONSTRUCTION_PERIOD]
+            if config.CONSTRUCTION_PERIOD
+            else None
+        )
+
+        params = SearchParams(
+            selected_area=config.SEARCH_AREAS,
+            offering_type=OfferingType(config.OFFERING_TYPE),
+            page=Page(from_=page_num),
+            price=price,
+            availability=availability_enums,
+            construction_period=construction_period_enums,
+            free_text_search="",  # Required field, but not used in current cmd logic
+        )
+        return params
+
     def __init__(self) -> None:
         self.user_agent = utils.get_user_agent()
         self.cookie_manager = funda_cookie_manager
         self.index_url = "https://www.funda.nl/en"
         self._page_extractor = None
+        self.playwright_client = None
         self.cookie_update_attempts = 0
+        self.crawler_id = random.randint(1000, 9999)
+        logger.info(f"[{self.crawler_id}] FundaCrawler instance created.")
+        self.processed_listing_ids = set()  # Duplicate ID detector
+        self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+
+        # Summary statistics
+        self.snapshots_stored = 0
+        self.error_html_saved = 0
+        self.ip_block_count = 0
+        self.parsing_failures = 0
+        self.tombstones_created = 0
+
         if config.SAVE_DATA_OPTION:
             self.store = StoreFactory.create_store(
                 config.SAVE_DATA_OPTION,
@@ -47,64 +110,129 @@ class FundaCrawler(AbstractCrawler):
                 search_areas=config.SEARCH_AREAS,
             )
 
-    async def start(self) -> None:
+    def _print_summary_report(self):
+        """Prints a summary of the crawl results."""
+        report = (
+            "--- Crawl Summary Report ---\n"
+            f"Snapshots Stored:     {self.snapshots_stored}\n"
+            f"Tombstones Created:   {self.tombstones_created}\n"
+            f"IP Blocked Count:     {self.ip_block_count}\n"
+            f"Parsing Failures:     {self.parsing_failures}\n"
+            f"Error HTMLs Saved:    {self.error_html_saved}\n"
+            "--------------------------"
+        )
+        logger.info(report)
 
+    async def start(self) -> None:
+        logger.info(f"[{self.crawler_id}] Crawler starting...")
         await self._initialize_base_client()
 
-        if config.FUNDA_CRAWL_TYPE == "listing":
-            listing_results = await self._get_listing_info()
-            detailed_results = None
+        try:
+            if config.FUNDA_CRAWL_TYPE == "listing":
+                # This mode remains a bulk operation as it doesn't fetch details.
+                listing_results = await self._get_listing_info()
+                if self.store:
+                    logger.info(f"Storing {len(listing_results)} listings...")
+                    for result in listing_results:
+                        try:
+                            await self.store.store_listing(result.to_flat_dict())
+                            self.snapshots_stored += 1
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to store listing [ID: {result.id}]: {e}",
+                                exc_info=True,
+                            )
+                    logger.info("Completed storing listings.")
 
-        elif config.FUNDA_CRAWL_TYPE == "detail":
-            listing_results = await self._get_listing_info()
+            elif config.FUNDA_CRAWL_TYPE == "detail":
+                # Pipeline mode for fetching and storing details
+                await self._run_detail_pipeline()
 
-            detail_references = [
-                HouseDetailReference(
-                    prop.id, prop.detail_page_relative_url, prop.address.city
-                )
-                for prop in listing_results
-            ]
+            elif config.FUNDA_CRAWL_TYPE == "update":
+                # Update mode for re-crawling available listings
+                await self._run_update_pipeline()
 
-            detailed_results = await self._get_detailed_info(detail_references)
+            else:
+                raise ValueError(f"Unsupported crawl type: {config.FUNDA_CRAWL_TYPE}")
+        finally:
+            self._print_summary_report()
+        logger.info(f"[{self.crawler_id}] Crawler finished.")
 
-        else:
-            raise ValueError(f"Unsupported crawl type: {config.FUNDA_CRAWL_TYPE}")
+    async def _run_detail_pipeline(self):
+        """
+        Runs the full listing -> detail -> store pipeline.
+        """
+        listing_generator = self.get_house_info_generator()
 
-        if self.store:
-            logger.info("Starting data storage process")
+        page_count = 0
+        async for page_listings in listing_generator:
+            page_count += 1
+            logger.debug(
+                f"Processing page {page_count} with {len(page_listings)} listings."
+            )
+            if not page_listings:
+                continue
 
-            # Store listing results
-            for result in listing_results:
+            detail_references = []
+            for prop in page_listings:
+                if prop.id in self.processed_listing_ids:
+                    logger.warning(
+                        f"[{self.crawler_id}] DUPLICATE ID DETECTED in listing feed: House ID {prop.id} was already processed."
+                    )
+                    continue  # Skip this duplicate property entirely
+
+                self.processed_listing_ids.add(prop.id)
+
                 try:
-                    await self.store.store_listing(result.to_flat_dict())
+                    # In the new model, we first fetch details, then store the complete snapshot.
+                    # The initial listing from the search page is just a reference.
+                    detail_references.append(
+                        HouseDetailReference(
+                            house_id=prop.id,
+                            detail_uri=prop.detail_page_relative_url,
+                            city=prop.address.city,
+                            listing_record_id=None,  # This is now deprecated
+                        )
+                    )
                 except Exception as e:
                     logger.error(
-                        "Failed to store listing [ID: %s]: %s",
-                        result.id,
-                        str(e),
+                        f"Failed to store listing [ID: {prop.id}], skipping detail fetch. Error: {e}",
                         exc_info=True,
                     )
-            logger.info("Completed storing %d listings", len(listing_results))
 
-            # Store detail results if available
-            if detailed_results is not None:
-                logger.info("Storing %d detailed results...", len(detailed_results))
-                for house_id, detail in detailed_results:
-                    try:
-                        # Assuming the store_details method can handle the data format
-                        await self.store.store_details(detail.to_dict_items())
-                    except Exception as e:
-                        logger.error(
-                            "Failed to store details [ID: %s]: %s",
-                            house_id,
-                            str(e),
-                            exc_info=True,
-                        )
-                logger.info(
-                    "Completed storing %d property details", len(detailed_results)
-                )
-        else:
-            logger.warning("No storage configured - skipping data storage")
+            # Now fetch and store details for the successfully stored listings
+            if detail_references:
+                await self._get_and_store_detailed_info(detail_references)
+
+    async def _run_update_pipeline(self):
+        """
+        Runs the update pipeline for available listings.
+        """
+        if not self.store:
+            logger.error("Update mode requires a store to be configured.")
+            return
+
+        available_listings = await self.store.get_available_listings()
+        logger.info(
+            f"Found {len(available_listings)} available listings to update from the active queue."
+        )
+
+        if not available_listings:
+            return
+
+        # The detail_uri needs to be constructed as it's not stored in the active queue.
+        # Funda URL format: /en/koop/amsterdam/appartement-88083558-prinsengracht-1117-d/
+        detail_references = [
+            HouseDetailReference(
+                house_id=item["listing_id"],
+                detail_uri=f"/en/{config.OFFERING_TYPE}/placeholder-city/placeholder-type-{item['listing_id']}",
+                city="Unknown",  # City is not available in the active queue
+                listing_record_id=None,
+            )
+            for item in available_listings
+        ]
+
+        await self._get_and_store_detailed_info(detail_references)
 
     async def _initialize_base_client(self):
         """Initialize the basic HTTP client for listing operations"""
@@ -116,77 +244,117 @@ class FundaCrawler(AbstractCrawler):
         )
 
     async def _get_listing_info(self):
-        search_areas = config.SEARCH_AREAS
-        offering_type = (
-            OfferingType.rent if config.OFFERING_TYPE == "rent" else OfferingType.buy
-        )
-        start_page = config.START_PAGE
-        end_page = config.END_PAGE
-        min_price = config.PRICE_MIN
-        max_price = config.PRICE_MAX
-        price_range = PriceRange(min_price, max_price)
+        """
+        Gets all listings as a single list. Used for 'listing' crawl type.
+        This method consumes the generator to produce a flat list.
+        """
+        all_properties = []
+        listing_generator = self.get_house_info_generator()
+        async for page_listings in listing_generator:
+            if page_listings:
+                all_properties.extend(page_listings)
+        return all_properties
 
-        if config.END_PAGE:
-            end_page = config.END_PAGE
-        return await self.get_house_info(
-            search_areas=search_areas,
-            offering_type=offering_type,
-            start_page=start_page,
-            end_page=end_page,
-            price_range=price_range,
-        )
-
-    async def _get_detailed_info(self, detail_list: List[HouseDetailReference]):
-        all_results = []
+    async def _get_and_store_detailed_info(
+        self, detail_list: List[HouseDetailReference]
+    ):
+        logger.info(f"Fetching details for {len(detail_list)} listings.")
         batch_size = config.BATCH_SIZE
 
-        await self._initialize_playwright_client()
+        if not self.playwright_client:
+            await self._initialize_playwright_client()
 
-        offering_type = config.OFFERING_TYPE
-        if offering_type == "buy":
-            self._page_extractor = FundaBuyExtractor()
-        elif offering_type == "rent":
-            self._page_extractor = FundaRentExtractor()
-        else:
-            raise ValueError(
-                f"Unsupported offering_type for detail extraction: {offering_type}"
-            )
+        if not self._page_extractor:
+            offering_type = config.OFFERING_TYPE
+            if offering_type == "buy":
+                self._page_extractor = FundaBuyExtractor()
+            elif offering_type == "rent":
+                self._page_extractor = FundaRentExtractor()
+            else:
+                raise ValueError(
+                    f"Unsupported offering_type for detail extraction: {offering_type}"
+                )
 
-        semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
         for i in range(0, len(detail_list), batch_size):
+            # Add random delay between batches, but not before the first one.
+            if i > 0 and config.RANDOM_DELAY_MAX > 0:
+                delay = random.uniform(config.RANDOM_DELAY_MIN, config.RANDOM_DELAY_MAX)
+                logger.info(
+                    f"Waiting for {delay:.2f} seconds before processing next batch..."
+                )
+                await asyncio.sleep(delay)
+
             batch = detail_list[i : i + batch_size]
-            logger.info(
-                f"Processing batch {i//batch_size + 1} of {math.ceil(len(detail_list)/batch_size)}..."
+            logger.debug(
+                f"Processing detail batch {i//batch_size + 1}/{math.ceil(len(detail_list)/batch_size)}..."
             )
 
             fetch_tasks = [
-                self._fetch_and_parse_detail(detail, semaphore) for detail in batch
+                self._fetch_parse_and_store_detail(detail) for detail in batch
             ]
+            await asyncio.gather(*fetch_tasks)
 
-            results = await asyncio.gather(*fetch_tasks)
-            for result in results:
-                if result:
-                    all_results.append(result)
+    async def _fetch_parse_and_store_detail(self, detail_ref: HouseDetailReference):
+        house_info = await self._fetch_and_parse_detail(detail_ref)
 
-        return all_results
+        if self.store:
+            try:
+                if house_info:
+                    # Case 1: Successful or partial parse, store the snapshot
+                    data_to_store = house_info.to_dict_items()
+                    # Manually ensure the listing_id is present, as it's crucial for upsert logic
+                    if "property_id" in data_to_store:
+                        data_to_store["listing_id"] = data_to_store.pop("property_id")
+                    if "listing_id" not in data_to_store:
+                        data_to_store["listing_id"] = detail_ref.house_id
+
+                    await self.store.store_listing(data_to_store)
+                    self.snapshots_stored += 1  # Counting each snapshot as a "store"
+                else:
+                    # Case 2: Total parsing failure, create a tombstone snapshot
+                    logger.warning(
+                        f"Creating tombstone snapshot for failed parse of house ID: {detail_ref.house_id}"
+                    )
+                    tombstone_data = {
+                        "id": detail_ref.house_id,
+                        "status": "[PARSE_FAILED]",
+                    }
+                    await self.store.store_listing(tombstone_data)
+                    self.tombstones_created += 1
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to store details or tombstone for house ID: {detail_ref.house_id}: {e}",
+                    exc_info=True,
+                )
 
     async def _fetch_and_parse_detail(
-        self, detail: HouseDetailReference, semaphore: asyncio.Semaphore
-    ):
+        self, detail: HouseDetailReference
+    ) -> Optional[HouseDetail]:
         """
         Fetches and parses a single house detail page.
+        Returns a tuple of (house_id, house_info object) or (None, None) on failure.
         """
         html_content = None
-        async with semaphore:
+        async with self.semaphore:
             try:
+                logger.debug(f"Fetching HTML for house ID: {detail.house_id}")
+
+                uri_to_fetch = detail.detail_uri
+                if "placeholder-city" in uri_to_fetch:
+                    # Construct a generic URL that Funda can resolve with just the ID
+                    uri_to_fetch = f"/en/zoek/object/?id={detail.house_id}"
+                    logger.info(f"Using generic URL for update mode: {uri_to_fetch}")
+
                 html_content = await self.playwright_client.get_house_detail_info(
-                    detail.detail_uri
+                    uri_to_fetch
                 )
+
                 if not html_content:
                     logger.warning(
                         "Received empty HTML content for house ID: %s", detail.house_id
                     )
-                    return None
+                    return None, None
 
                 if "Je bent bijna op de pagina die je zoekt" in html_content:
                     raise IPBlockError("Captcha page detected.")
@@ -196,64 +364,67 @@ class FundaCrawler(AbstractCrawler):
                 )
 
                 if house_info is None:
-                    # This means the property was pre-filtered (e.g., parking) and should be skipped.
+                    logger.warning(
+                        f"Parsing returned None for house ID: {detail.house_id}"
+                    )
+                    self.parsing_failures += 1
+                    if html_content:
+                        cleaned_html = utils.clean_html_content(html_content)
+                        await utils.save_error_html(
+                            city=detail.city,
+                            house_id=detail.house_id,
+                            html_content=cleaned_html,
+                        )
+                        self.error_html_saved += 1
                     return None
 
-                # Define essential numeric fields that should not be zero
+                # Check for partial failure (e.g., price is missing)
                 essential_fields = ["price"]
-
-                # Check for partial parsing failure
                 is_partial_failure = any(
-                    getattr(house_info, field, 0) == 0 for field in essential_fields
+                    getattr(house_info, field) is None for field in essential_fields
                 )
-
                 if is_partial_failure:
-                    raise ValueError(
-                        "Partial parsing failure: one or more essential fields are missing."
+                    logger.warning(
+                        f"Partial parsing failure for house ID: {detail.house_id}. Marking and preserving."
                     )
+                    if html_content:
+                        cleaned_html = utils.clean_html_content(html_content)
+                        await utils.save_error_html(
+                            city=detail.city,
+                            house_id=detail.house_id,
+                            html_content=cleaned_html,
+                        )
+                        self.error_html_saved += 1
+                    original_description = house_info.description or ""
+                    house_info.description = f"[PARTIAL_PARSE] {original_description}"
 
-                logger.info(
-                    "Successfully extracted house details [ID: %s] | Price: %s, Area: %s, Label: %s, Status: %s, Type: %s",
-                    detail.house_id,
-                    house_info.price or "N/A",
-                    house_info.living_area or "N/A",
-                    house_info.energy_label or "N/A",
-                    house_info.status or "N/A",
-                    house_info.house_type or "N/A",
-                )
-                return (detail.house_id, house_info)
+                return house_info
 
             except IPBlockError:
                 logger.warning(
-                    "IP blocked for house ID %s, reporting failure and attempting to refresh cookie...",
-                    detail.house_id,
+                    "IP blocked for house ID %s, reporting failure.", detail.house_id
                 )
+                self.ip_block_count += 1
                 await self.cookie_manager.report_failure()
-
-                if self.cookie_update_attempts >= config.MAX_COOKIE_UPDATE_LIMIT:
+                if self.cookie_update_attempts < config.MAX_COOKIE_UPDATE_LIMIT:
+                    self.cookie_update_attempts += 1
+                    await self.cookie_manager.get_cookie(force_refresh=True)
+                else:
                     raise Exception("Cookie update limit reached. Halting crawler.")
-
-                self.cookie_update_attempts += 1
-                await self.cookie_manager.get_cookie(force_refresh=True)
-                # We don't retry here, but the next run with a fresh cookie should succeed.
 
             except Exception as e:
                 logger.error(
-                    "Failed to process detail for house [ID: %s]: %s",
-                    detail.house_id,
-                    str(e),
+                    f"Failed to process detail for house [ID: {detail.house_id}]: {e}",
                     exc_info=True,
                 )
                 if html_content:
-                    logger.error(
-                        "--- HTML content for failed extraction [ID: %s] ---\n",
-                        detail.house_id,
-                    )
+                    cleaned_html = utils.clean_html_content(html_content)
                     await utils.save_error_html(
                         city=detail.city,
                         house_id=detail.house_id,
-                        html_content=html_content,
+                        html_content=cleaned_html,
                     )
+                    self.error_html_saved += 1
         return None
 
     async def _handle_download_imgs(self, house_lists):
@@ -278,8 +449,6 @@ class FundaCrawler(AbstractCrawler):
     async def create_funda_playwright_client(
         self, httpx_proxy: Optional[str]
     ) -> FundaPlaywrightClient:
-        logger.info("Creating Funda API client for detail fetching.")
-
         cookie_str = await self.cookie_manager.get_cookie()
         cookie_dict = {
             cookie.split("=")[0]: cookie.split("=")[1]
@@ -310,28 +479,29 @@ class FundaCrawler(AbstractCrawler):
         )
         return funda_client
 
-    async def fetch_page(self, search_areas, offering_type, page, price_range=None):
+    async def fetch_page(self, search_params: SearchParams):
         """
         Fetch and parse a single page of property listings with error handling.
 
         Args:
-            search_areas: List of search areas
-            offering_type: Type of offering (rent/buy)
-            page: Page number to fetch
-            price_range: Price range filter
+            search_params: SearchParams object containing all filter criteria.
 
         Returns:
             List of properties or empty list on error
         """
+        page = search_params.page.from_
+        logger.debug(f"Fetching page with 'from' parameter: {page}")
         try:
             current_page = await self.client.get_single_page_house_info(
-                search_areas, offering_type, price_range=price_range, page=page
+                search_params=search_params
             )
             parsed_result = await self.client.parse_single_page_house_info(
-                response_data=current_page, offering_type=offering_type
+                response_data=current_page, offering_type=search_params.offering_type
             )
             if parsed_result.properties:
                 return parsed_result.properties
+
+            logger.debug(f"Received 0 properties for 'from' parameter: {page}")
             return []
         except PaginationLimitError as e:
             logger.error("Pagination limit exceeded on page %d: %s", page, str(e))
@@ -350,158 +520,48 @@ class FundaCrawler(AbstractCrawler):
             )
             return []
 
-    async def get_house_info(
-        self,
-        search_areas: List[str],
-        offering_type: OfferingType,
-        start_page: int = 1,
-        end_page: int | None = None,
-        price_range: PriceRange | None = None,
-    ) -> List[property]:
-        total_properties = []
-        logger.info(
-            "Starting house search - Areas: %s, Type: %s, Price Range: %s",
-            search_areas,
-            offering_type,
-            (
-                f"€{price_range.from_price}-{price_range.to_price}"
-                if price_range
-                else "No limit"
-            ),
-        )
+    async def get_house_info_generator(self):
+        """
+        An async generator that yields pages of property listings.
+        """
+        start_page = config.START_PAGE
+        end_page = config.END_PAGE
+
+        # Build initial search params for the first page
+        search_params = self._build_search_params((start_page - 1) * 15)
+
         try:
-            first_page = await self.client.get_single_page_house_info(
-                search_areas, offering_type, page=start_page, price_range=price_range
+            first_page_data = await self.client.get_single_page_house_info(
+                search_params=search_params
             )
-
             first_page_houses = await self.client.parse_single_page_house_info(
-                response_data=first_page, offering_type=offering_type
+                response_data=first_page_data,
+                offering_type=search_params.offering_type,
             )
-        except PaginationLimitError as e:
-            logger.error(
-                "Pagination limit exceeded on first page (page %d): %s",
-                start_page,
-                str(e),
-            )
-            logger.error(
-                "Cannot proceed with search - pagination limit reached immediately. "
-                "Try using more specific search criteria to reduce total results."
-            )
-            return []  # Return empty list as we can't even get the first page
-        except EmptyResponseError as e:
-            logger.error(
-                "Empty response received for first page (page %d): %s",
-                start_page,
-                str(e),
-            )
-            return []
         except Exception as e:
-            logger.error(
-                "Unexpected error fetching first page (page %d): %s",
-                start_page,
-                str(e),
-                exc_info=True,
-            )
-            return []
+            logger.error(f"Failed to fetch first page: {e}", exc_info=True)
+            return
 
-        logger.info(
-            "Processing results from page %d (%d properties)",
-            start_page,
-            len(first_page_houses.properties),
-        )
+        yield first_page_houses.properties
 
-        for property in first_page_houses.properties:
-            if offering_type == OfferingType.rent:
-                # situation rent
-                price_display = f"€{property.price.rent_price[0]:.2f}/{property.price.rent_price_condition}"
-            else:
-                # situation buy
-                price_display = f"€{property.price.selling_price[0]:,.2f}"
+        total_pages = math.ceil(first_page_houses.total_value / 15)
+        logger.info(f"Total pages: {total_pages}")
 
-            # 构建房号显示（包含后缀）
-            house_number_display = property.address.house_number
-            if property.address.house_number_suffix:
-                house_number_display += f" {property.address.house_number_suffix}"
-
-            living_area_display = (
-                f"{property.floor_area[0]:.1f}m²" if property.floor_area else "N/A"
-            )
-            logger.info(
-                "Property Details [ID: %s] [%s] | Price: %s, Rooms: %d, Area: %s, Label: %s | %s, %s %s",
-                property.id,
-                property.offering_type[0].upper(),  # 显示 RENT 或 BUY
-                price_display,
-                property.number_of_rooms,
-                living_area_display,
-                property.energy_label,
-                property.address.street_name,
-                house_number_display,
-                property.address.city,
-            )
-
-        page_nums = math.ceil(first_page_houses.total_value / 15)
-        logger.info(
-            "Total page num %d with total houses %d",
-            page_nums,
-            first_page_houses.total_value,
-        )
-        total_properties.extend(first_page_houses.properties)
-
-        if end_page is not None:
-            end_page = min(end_page, page_nums + 1)
-            if end_page <= start_page:
-                return total_properties
+        if end_page is None:
+            end_page = total_pages + 1
         else:
-            end_page = page_nums + 1
+            end_page = min(end_page, total_pages + 1)
 
-        tasks = [
-            self.fetch_page(search_areas, offering_type, page, price_range)
-            for page in range(start_page + 1, end_page)
-        ]
-
-        if tasks:
-            results = await asyncio.gather(*tasks)
-            for page_num, page_properties in enumerate(results, start=start_page + 1):
-                logger.info(
-                    "Processing results from page %d (%d properties)",
-                    page_num,
-                    len(page_properties),
-                )
-                for property in first_page_houses.properties:
-                    if offering_type == OfferingType.rent:
-                        # situation rent
-                        price_display = f"€{property.price.rent_price[0]:.2f}/{property.price.rent_price_condition}"
-                    else:
-                        # situation buy
-                        price_display = f"€{property.price.selling_price[0]:,.2f}"
-
-                    # 构建房号显示（包含后缀）
-                    house_number_display = property.address.house_number
-                    if property.address.house_number_suffix:
-                        house_number_display += (
-                            f" {property.address.house_number_suffix}"
-                        )
-
-                    living_area_display = (
-                        f"{property.floor_area[0]:.1f}m²"
-                        if property.floor_area
-                        else "N/A"
-                    )
-                    logger.info(
-                        "Property Details [ID: %s] [%s] | Price: %s, Rooms: %d, Area: %s, Label: %s | %s, %s %s",
-                        property.id,
-                        property.offering_type[0].upper(),  # 显示 RENT 或 BUY
-                        price_display,
-                        property.number_of_rooms,
-                        living_area_display,
-                        property.energy_label,
-                        property.address.street_name,
-                        house_number_display,
-                        property.address.city,
-                    )
-                total_properties.extend(page_properties)
-
-        return total_properties
+        for page_num in range(start_page + 1, end_page):
+            try:
+                # THE FIX: Correctly calculate the 'from' parameter for pagination
+                search_params.page.from_ = (page_num - 1) * 15
+                page_properties = await self.fetch_page(search_params)
+                yield page_properties
+            except Exception as e:
+                logger.error(f"Error fetching page {page_num}: {e}", exc_info=True)
+                # Continue to the next page
+                continue
 
     async def download_imgs(
         self,

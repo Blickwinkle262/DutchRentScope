@@ -12,12 +12,9 @@ from tools import utils
 from base.base import AbstractStore
 from .funda_postgre import (
     get_db,
-    add_new_detail,
-    add_new_listing,
-    query_detail_by_id,
-    query_listing_by_id,
-    update_detail_by_id,
-    update_listing_by_id,
+    upsert_listing,
+    add_new_image,
+    get_listings_for_update,
 )
 
 
@@ -47,68 +44,73 @@ class FundaCsvStore(AbstractStore):
         )
         self.detail_file = self.date_folder / f"{offering_type}_{area_str}_details.csv"
 
-    async def _save_to_csv(self, file_path: pathlib.Path, item: Dict):
-        async with aiofiles.open(
-            file_path, mode="a+", encoding="utf-8-sig", newline=""
-        ) as f:
-            writer = csv.writer(f)
-            if await f.tell() == 0:
-                await writer.writerow(item.keys())
-            await writer.writerow(item.values())
+        # Initialize header-written flags based on file existence
+        self._listing_header_written = self.listing_file.exists()
+        self._detail_header_written = self.detail_file.exists()
+        self._lock = asyncio.Lock()
+
+    async def _save_to_csv(self, file_path: pathlib.Path, item: Dict, file_type: str):
+        header_written_flag = f"_{file_type}_header_written"
+
+        async with self._lock:
+            # Check the flag inside the lock to ensure atomicity
+            write_header = not getattr(self, header_written_flag)
+
+            async with aiofiles.open(
+                file_path, mode="a+", encoding="utf-8-sig", newline=""
+            ) as f:
+                writer = csv.writer(f)
+                if write_header:
+                    await writer.writerow(item.keys())
+                    setattr(self, header_written_flag, True)
+                await writer.writerow(item.values())
 
     async def store_listing(self, content: Dict):
-        await self._save_to_csv(self.listing_file, content)
+        await self._save_to_csv(self.listing_file, content, "listing")
 
     async def store_details(self, content: Dict):
-        await self._save_to_csv(self.detail_file, content)
+        await self._save_to_csv(self.detail_file, content, "detail")
 
 
 class FundaPgStore(AbstractStore):
-    def __init__(self):
+    def __init__(self, offering_type: str, **kwargs):
         self.db = get_db()
+        self.offering_type = offering_type
+        self.update_limit = kwargs.get("update_limit", 100)  # Default limit for updates
+
+    async def get_available_listings(self) -> list[dict]:
+        """Retrieves a batch of listings due for an update."""
+        try:
+            return await get_listings_for_update(self.offering_type, self.update_limit)
+        except Exception as e:
+            raise
 
     async def store_listing(self, content: Dict):
+        """Stores a listing snapshot."""
         try:
-            # Check if property already exists
-            property_id = content.get("id")
-            existing_listing = await query_listing_by_id(property_id)
-
-            if not existing_listing:
-
-                await add_new_listing(content)
-            else:
-                await update_listing_by_id(property_id, content)
+            await upsert_listing(content, self.offering_type)
         except Exception as e:
             raise
 
-    async def store_details(self, content: Dict):
-        try:
-
-            # Get the property ID from the content
-            property_id = content.get("property_id")
-            existing_detail = await query_detail_by_id(property_id)
-
-            if not existing_detail:
-
-                await add_new_detail(content)
-            else:
-
-                await update_detail_by_id(property_id, content)
-
-        except Exception as e:
-            raise
+    async def store_details(self, content: Dict, listing_record_id: int):
+        """
+        DEPRECATED: Details are now stored as part of the listing snapshot (details_jsonb).
+        This method is kept for compatibility but does nothing.
+        """
+        pass
 
     async def store_image(self, content: Dict):
         try:
-            await add_new_image(content)
+            # Add offering_type to the content dict for the images table
+            content_with_type = content.copy()
+            content_with_type["offering_type"] = self.offering_type
+            await add_new_image(content_with_type)
         except Exception as e:
             raise
 
 
 class StoreFactory:
-    STORES = {
-        "csv": FundaCsvStore,
-    }
+    STORES = {"csv": FundaCsvStore, "db": FundaPgStore}
 
     @staticmethod
     def create_store(method: str, **kwargs) -> AbstractStore:

@@ -1,270 +1,135 @@
-from typing import Dict
+import re
+from typing import Dict, Any
 
 
+# This is the descriptor class that powers the cleaning logic.
+# It's used as a decorator.
 class ItemDescriptor:
-    def __init__(self, field_type=str, pipeline_func=None):
-        self.field_type = field_type
-        if pipeline_func is None:
-            pipeline_func = lambda self, x: x
-        self.pipeline_func = pipeline_func
+    def __init__(self, target_type):
+        self.target_type = target_type
+        self.func = None
 
-    def __set_name__(self, owner, name):
-        self.name = name
-        self._private_name = f"_{name}"
+    def __call__(self, func):
+        self.func = func
+        return self
 
     def __get__(self, instance, owner):
         if instance is None:
             return self
 
-        value = instance.__dict__.get(self._private_name, None)
-
-        if value is None:
-            return 0 if self.field_type in (int, float) else ""
-        else:
-            try:
-                value = self.pipeline_func(instance, value)
-                return self.field_type(value)
-            except (ValueError, TypeError):
-                return 0 if self.field_type in (int, float) else ""
+        raw_value = getattr(instance, "_" + self.func.__name__, None)
+        return self.func(instance, raw_value)
 
     def __set__(self, instance, value):
-        instance.__dict__[self._private_name] = value
-
-    def __call__(self, pipeline_func):
-        self.pipeline_func = pipeline_func
-        return self
+        setattr(instance, "_" + self.func.__name__, value)
 
 
-class HouseDetails:
-    @ItemDescriptor(int)
-    def id(self, value):
-        if not value:
-            return 999999
-        else:
+class HouseDetail:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            # This allows initializing with 'id' from the extractor
+            if key == "id":
+                key = "property_id"
+            setattr(self, key, value)
+
+    def _clean_numeric(self, value: str, is_int: bool = False) -> Any:
+        """A helper to clean numeric strings."""
+        if not isinstance(value, str):
             return value
+        try:
+            # Remove currency, separators, units, and text
+            cleaned = re.sub(r"[€.,\sA-Za-z/²³]+", "", value)
+            if not cleaned:
+                return None
+            return int(cleaned) if is_int else float(cleaned)
+        except (ValueError, TypeError):
+            return None
+
+    @ItemDescriptor(int)
+    def property_id(self, value):
+        return int(value) if value else None
 
     @ItemDescriptor(float)
     def price(self, value):
-        """Convert price string to float, handling thousands separators"""
-        if not value:
-            return 0
-        try:
-            # Remove currency and text, handle thousands separator
-            numeric_part = value.split("€")[-1].strip().split(" ")[0]
-            # Remove thousands separators
-            cleaned = numeric_part.replace(".", "").replace(",", "")
-            return float(cleaned)
-        except (ValueError, AttributeError):
-            return 0
+        return self._clean_numeric(value)
 
+    @ItemDescriptor(float)
     def deposit(self, value):
-        """Clean deposit amount, handling thousands separators"""
-        if not value:
-            return 0
-        try:
-            # Remove currency and text, handle thousands separator
-            cleaned = value.replace("€", "").replace(".", "").replace(",", "")
-            cleaned = cleaned.split("one-off")[0].strip()
-            return float(cleaned)
-        except (ValueError, AttributeError):
-            return 0
+        return self._clean_numeric(value)
 
     @ItemDescriptor(float)
     def living_area(self, value):
-        """Convert area to float, handling None values"""
-        if not value:
-            return 0
-        try:
-            return float(value.replace("m²", "").strip())
-        except (ValueError, AttributeError):
-            return 0
+        return self._clean_numeric(value)
 
     @ItemDescriptor(float)
     def external_area(self, value):
-        """Convert external area to float, handling None values"""
-        if not value:
-            return 0
-        try:
-            return float(value.replace("m²", "").strip())
-        except (ValueError, AttributeError):
-            return 0
+        return self._clean_numeric(value)
 
     @ItemDescriptor(float)
     def volume(self, value):
-        """Convert volume to float, handling None values"""
-        if not value:
-            return 0
-        try:
-            return float(value.replace("m³", "").strip())
-        except (ValueError, AttributeError):
-            return 0
+        return self._clean_numeric(value)
 
-    # Property characteristics
     @ItemDescriptor(str)
     def house_type(self, value):
-        """Clean property type description"""
-        return value.strip()
+        return value.strip() if isinstance(value, str) else value
 
-    # Building information
     @ItemDescriptor(int)
     def construction_year(self, value):
-        """Extract and clean construction year"""
-        try:
-            return int(value.strip())
-        except ValueError:
-            return 0
+        return self._clean_numeric(value, is_int=True)
 
     @ItemDescriptor(str)
     def energy_label(self, value):
-        """Clean energy label"""
-        # Handle formats like "A+++", "B", etc.
-        return value.strip().upper()
+        return value.strip().upper() if isinstance(value, str) else value
 
-    # Exterior features
     @ItemDescriptor(str)
     def balcony(self, value):
-        """Clean balcony information"""
-        return value.strip()
+        return value.strip() if isinstance(value, str) else value
 
     @ItemDescriptor(str)
     def storage(self, value):
-        """Clean storage information"""
-        return value.strip()
+        return value.strip() if isinstance(value, str) else value
 
     @ItemDescriptor(str)
     def parking(self, value):
-        """Clean parking information"""
-        return value.strip()
+        return value.strip() if isinstance(value, str) else value
 
-    # Status information
     @ItemDescriptor(str)
     def status(self, value):
-        """Clean property status"""
-        return value.strip()
+        return value.strip() if isinstance(value, str) else value
 
-    @ItemDescriptor(list)
+    @ItemDescriptor(str)
     def insulation(self, value):
-        if not value:
-            return []
+        return value.strip() if isinstance(value, str) else value
 
-        features = [
-            item.strip()
-            for item in value.replace(" and ", ",").split(",")
-            if item.strip()
-        ]
-        return features
-
-    @ItemDescriptor(list)
+    @ItemDescriptor(str)
     def heating(self, value):
-        if not value:
-            return []
-
-        features = [
-            item.strip()
-            for item in value.replace(" and ", ",").split(",")
-            if item.strip()
-        ]
-        return features
+        return value.strip() if isinstance(value, str) else value
 
     @ItemDescriptor(str)
     def hot_water(self, value):
-        if not value or value.strip() == "":
-            return "Not specified"
-        return value.strip()
+        return value.strip() if isinstance(value, str) else value
 
     @ItemDescriptor(str)
     def description(self, value):
-        return " ".join(value.split())
+        return " ".join(value.split()) if isinstance(value, str) else value
 
     @ItemDescriptor(str)
     def listed_since(self, value):
-        """Clean the 'listed since' date string."""
-        return value.strip() if value else "N/A"
+        return value.strip() if isinstance(value, str) else value
 
     @ItemDescriptor(str)
     def date_of_rental(self, value):
-        """Clean the 'date of rental/sale' string."""
-        return value.strip() if value else "N/A"
+        return value.strip() if isinstance(value, str) else value
 
     @ItemDescriptor(str)
     def term(self, value):
-        """Clean the 'term' (time on market) string."""
-        return value.strip() if value else "N/A"
-
-    def __init__(self, *args, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, f"_{key}", value)
-
-    @classmethod
-    def to_dict(cls):
-        return {
-            name: name
-            for name in cls.__dict__
-            if not name.startswith("_")
-            and isinstance(getattr(cls, name), ItemDescriptor)
-        }
+        return value.strip() if isinstance(value, str) else value
 
     def to_dict_items(self) -> Dict:
-        """Convert HouseDetails instance to a dictionary with values.
-
-        Returns:
-            Dict: A dictionary containing all descriptor field values, with field names as keys.
-            For example: {'price': 1500.0, 'deposit': 2000.0, ...}
-        """
+        """Convert HouseDetail instance to a dictionary with cleaned values."""
         descriptor_names = [
             name
             for name, attr in vars(self.__class__).items()
             if isinstance(attr, ItemDescriptor)
         ]
-
-        # Create dictionary with actual values from instance
         return {name: getattr(self, name) for name in descriptor_names}
-
-
-class HouseInfo:
-
-    @ItemDescriptor(float)
-    def monthly_rent(self, value):
-        return value.replace("€", "").replace(",", "").split("/")[0].strip()
-
-    @ItemDescriptor(int)
-    def living_area(self, value):
-        return value.replace("m²", "").strip()
-
-    @ItemDescriptor(int)
-    def bedroom_count(self, value):
-        return value.strip()
-
-    @ItemDescriptor(str)
-    def energy_level(self, value):
-        level = value.strip().upper()
-        return level if level in "ABCDEFG" else ""
-
-    @ItemDescriptor(str)
-    def street_address(self, value):
-        return value
-
-    @ItemDescriptor(str)
-    def postal_code(self, value):
-        return value.strip()
-
-    @ItemDescriptor(str)
-    def city(self, value):
-        return value.strip()
-
-    @ItemDescriptor(str)
-    def property_agent(self, value):
-        return value
-
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, f"_{key}", value)
-
-    @classmethod
-    def to_dict(cls):
-        return {
-            name: getattr(cls, name)
-            for name in cls.__dict__
-            if not name.startswith("_")
-            and isinstance(getattr(cls, name), ItemDescriptor)
-        }
