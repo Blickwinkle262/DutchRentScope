@@ -591,10 +591,16 @@ class FundaCrawler(AbstractCrawler):
         base_path: str | Path = "data/house_images",
         img_size: str = "medium",
     ) -> dict[str, bool]:
-
         base_path = Path(base_path)
         house_dir = base_path / house_name
-        os.makedirs(house_dir, exist_ok=True)
+        logger.info(f"Generated house name: '{house_name}'")
+        logger.info(f"Attempting to create directory: {house_dir}")
+        try:
+            os.makedirs(house_dir, exist_ok=True)
+            logger.info(f"Successfully created or found directory: {house_dir}")
+        except OSError as e:
+            logger.error(f"Failed to create directory {house_dir}: {e}", exc_info=True)
+            return {}  # Return empty dict if directory creation fails
 
         results = {}
 

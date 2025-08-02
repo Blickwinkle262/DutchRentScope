@@ -63,7 +63,10 @@ async def main():
         await crawler.start()
 
         # After a crawl that modifies data, automatically update the active listings queue
-        if config.FUNDA_CRAWL_TYPE in ["detail", "update"]:
+        if config.SAVE_DATA_OPTION == "db" and config.FUNDA_CRAWL_TYPE in [
+            "detail",
+            "update",
+        ]:
             logger.info(
                 "Crawl finished. Automatically updating the active listings queue..."
             )

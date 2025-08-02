@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS new_rent_listings (
     plot_area NUMERIC(10, 2),
     number_of_rooms INTEGER,
     number_of_bedrooms INTEGER,
-    energy_label VARCHAR(10),
+    energy_label VARCHAR(50),
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     current_snapshot_id INTEGER
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS new_buy_listings (
     plot_area NUMERIC(10, 2),
     number_of_rooms INTEGER,
     number_of_bedrooms INTEGER,
-    energy_label VARCHAR(10),
+    energy_label VARCHAR(50),
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     current_snapshot_id INTEGER

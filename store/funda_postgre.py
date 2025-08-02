@@ -120,6 +120,9 @@ async def upsert_listing(listing_item: Dict, offering_type: str) -> None:
         k: v for k, v in listing_item.items() if k in LISTING_VOLATILE_FIELDS
     }
 
+    # Exclude crawl_date from hash calculation as it's metadata, not listing data
+    volatile_data.pop("crawl_date", None)
+
     # Consolidate price fields from either rent or buy
     price = volatile_data.pop("rent_price", None)
     if price is None:

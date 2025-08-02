@@ -6,6 +6,7 @@ import pathlib
 import random
 import time
 import aiohttp
+import logging
 from pathlib import Path
 from bs4 import BeautifulSoup
 
@@ -89,14 +90,25 @@ async def download_single_image(
     url: str, save_path: Path, session: aiohttp.ClientSession
 ) -> bool:
     try:
+        logging.debug(f"Attempting to download image from: {url}")
         async with session.get(url) as response:
             if response.status == 200:
                 async with aiofiles.open(save_path, "wb") as f:
                     await f.write(await response.read())
+                logging.debug(f"Successfully downloaded and saved to: {save_path}")
                 return True
-            return False
+            else:
+                logging.warning(
+                    f"Failed to download {url}. Status code: {response.status}"
+                )
+                return False
+    except aiohttp.ClientConnectorError as e:
+        logging.error(f"Connection error while downloading {url}: {e}", exc_info=True)
+        return False
     except Exception as e:
-        logging.error(f"Error downloading {url}: {str(e)}")
+        logging.error(
+            f"An unexpected error occurred while downloading {url}: {e}", exc_info=True
+        )
         return False
 
 
