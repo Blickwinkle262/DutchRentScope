@@ -52,7 +52,9 @@ async def main():
             return
 
         logger.info("Starting ETL process to manage active listings...")
+        await db.init_db()  # Ensure DB is connected
         await db.manage_active_listings(offering_type=config.OFFERING_TYPE)
+        await db.close_db()  # Close connection after ETL
         logger.info("ETL process finished.")
 
     else:
@@ -65,10 +67,18 @@ async def main():
             logger.info(
                 "Crawl finished. Automatically updating the active listings queue..."
             )
+            await db.init_db()  # Ensure DB is connected
             await db.manage_active_listings(offering_type=config.OFFERING_TYPE)
+            await db.close_db()  # Close connection after update
             logger.info("Active listings queue updated.")
 
-    if config.SAVE_DATA_OPTION == "db":
+    # Final check to close DB if it was opened but not closed by the ETL/update logic
+    if (
+        config.SAVE_DATA_OPTION == "db"
+        and db.PropertyDB._instance
+        and db.PropertyDB._instance.pool
+    ):
+        logger.info("Closing main database connection.")
         await db.close_db()
 
 

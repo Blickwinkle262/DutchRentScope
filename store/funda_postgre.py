@@ -1,5 +1,7 @@
 import json
 import hashlib
+import zlib
+import base64
 from typing import Dict, List, Any
 
 from db import PropertyDB
@@ -7,36 +9,66 @@ from db import PropertyDB
 # --- Constants for field separation ---
 
 # Fields that are considered static and belong to the main listings table.
+# Based on the flattened structure of Property/BuyProperty in m_response.py
 LISTING_STATIC_FIELDS = {
-    "property_type",
+    "address_country",
+    "address_province",
+    "address_city",
+    "address_municipality",
+    "address_district",
+    "address_neighbourhood",
     "address_street",
     "address_number",
     "address_suffix",
     "address_postal_code",
-    "address_city",
-    "address_province",
-    "address_country",
+    "address_is_bag",
     "latitude",
     "longitude",
+    # --- Promoted fields for better query performance ---
+    "property_type",
+    "construction_year",
+    "living_area",
+    "plot_area",
+    "number_of_rooms",
+    "number_of_bedrooms",
+    "energy_label",
 }
 
 # Fields that are considered volatile and will be stored in snapshots.
-# This includes fields from both the old listings and details tables.
+# This includes all fields from m_house_detail.py and the non-static fields from m_response.py
 LISTING_VOLATILE_FIELDS = {
+    # From m_response.py
+    "type",
     "status",
-    "price",
+    "zoning",
+    "construction_type",
+    "floor_area",  # Kept here for JSONB, but living_area is the primary static field
+    "plot_area",  # Kept here for JSONB, but plot_area is the primary static field
+    "floor_area_range_min",
+    "floor_area_range_max",
+    "plot_area_range_min",
+    "plot_area_range_max",
     "rent_price",
+    "rent_price_condition",
+    "rent_price_type",
+    "rent_price_range_min",
+    "rent_price_range_max",
     "asking_price",
-    "floor_area",
-    "plot_area",
-    "number_of_rooms",
-    "energy_label",
+    "asking_price_range_min",
+    "asking_price_range_max",
+    "price_type",
+    "agent_name",
+    "detail_url",
+    "media_types",
+    "publish_date",
+    "blikvanger_enabled",
+    "crawl_date",
+    # From m_house_detail.py
+    "price",
     "deposit",
-    "living_area",
     "external_area",
     "volume",
     "house_type",
-    "construction_year",
     "balcony",
     "storage",
     "parking",
@@ -100,6 +132,21 @@ async def upsert_listing(listing_item: Dict, offering_type: str) -> None:
     details_jsonb = {
         k: v for k, v in volatile_data.items() if k not in ["status", "price"]
     }
+
+    # Compress description if it exists
+    if "description" in details_jsonb and details_jsonb["description"]:
+        description_str = details_jsonb["description"]
+        # 1. Encode to bytes
+        description_bytes = description_str.encode("utf-8")
+        # 2. Compress
+        compressed_bytes = zlib.compress(description_bytes)
+        # 3. Base64 encode
+        base64_bytes = base64.b64encode(compressed_bytes)
+        # 4. Decode to string for JSON serialization
+        details_jsonb["description"] = base64_bytes.decode("ascii")
+        # Add a flag to indicate compression
+        details_jsonb["description_is_compressed"] = True
+
     core_volatile_data = {
         "status": volatile_data.get("status"),
         "price": volatile_data.get("price"),
@@ -210,9 +257,14 @@ async def get_listings_for_update(offering_type: str, limit: int) -> List[Dict]:
 
 async def add_new_image(image_item: Dict) -> int:
     """
-    Adds a new image to the central house_images table. (Unchanged)
+    Adds a new image's metadata to the house_images table.
     """
     db = get_db()
+    # Ensure required keys are present
+    required_keys = {"listing_id", "offering_type", "image_url"}
+    if not required_keys.issubset(image_item.keys()):
+        raise ValueError(f"Missing one of the required keys: {required_keys}")
+
     columns = list(image_item.keys())
     placeholders = [f"${i+1}" for i in range(len(columns))]
     values = list(image_item.values())

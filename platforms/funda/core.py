@@ -29,6 +29,7 @@ from model.m_search import (
     Availability,
     ConstructionPeriod,
 )
+from model.m_response import Property
 from model.m_house_detail import HouseDetail
 from .help import FundaBuyExtractor, FundaRentExtractor
 from store import StoreFactory
@@ -40,7 +41,7 @@ class HouseDetailReference(NamedTuple):
     house_id: str
     detail_uri: str
     city: str
-    listing_record_id: Optional[int] = None
+    listing_data: Optional[Property] = None  # Carry the full listing object
 
 
 class FundaCrawler(AbstractCrawler):
@@ -184,14 +185,13 @@ class FundaCrawler(AbstractCrawler):
                 self.processed_listing_ids.add(prop.id)
 
                 try:
-                    # In the new model, we first fetch details, then store the complete snapshot.
-                    # The initial listing from the search page is just a reference.
+                    # Carry the full listing object (prop) for later merging
                     detail_references.append(
                         HouseDetailReference(
                             house_id=prop.id,
                             detail_uri=prop.detail_page_relative_url,
                             city=prop.address.city,
-                            listing_record_id=None,  # This is now deprecated
+                            listing_data=prop,
                         )
                     )
                 except Exception as e:
@@ -203,6 +203,13 @@ class FundaCrawler(AbstractCrawler):
             # Now fetch and store details for the successfully stored listings
             if detail_references:
                 await self._get_and_store_detailed_info(detail_references)
+
+            # After processing details, handle image downloads for the current page
+            if config.DOWNLOAD_IMAGES and page_listings:
+                logger.info(
+                    f"Handling image downloads for {len(page_listings)} listings on page {page_count}."
+                )
+                await self._handle_download_imgs(page_listings)
 
     async def _run_update_pipeline(self):
         """
@@ -220,14 +227,14 @@ class FundaCrawler(AbstractCrawler):
         if not available_listings:
             return
 
-        # The detail_uri needs to be constructed as it's not stored in the active queue.
-        # Funda URL format: /en/koop/amsterdam/appartement-88083558-prinsengracht-1117-d/
+        # For update mode, we don't have listing data, so we pass None.
+        # The detail page will be the primary source of data.
         detail_references = [
             HouseDetailReference(
                 house_id=item["listing_id"],
                 detail_uri=f"/en/{config.OFFERING_TYPE}/placeholder-city/placeholder-type-{item['listing_id']}",
-                city="Unknown",  # City is not available in the active queue
-                listing_record_id=None,
+                city="Unknown",
+                listing_data=None,
             )
             for item in available_listings
         ]
@@ -295,28 +302,41 @@ class FundaCrawler(AbstractCrawler):
             await asyncio.gather(*fetch_tasks)
 
     async def _fetch_parse_and_store_detail(self, detail_ref: HouseDetailReference):
+        # Step 1: Initialize with listing data if available, creating a base dictionary.
+        if detail_ref.listing_data:
+            data_to_store = detail_ref.listing_data.to_flat_dict()
+            # The key from listing is 'id', rename it to the canonical 'listing_id'
+            if "id" in data_to_store:
+                data_to_store["listing_id"] = data_to_store.pop("id")
+        else:
+            # For update mode or if listing data is missing, start with the ID.
+            data_to_store = {"listing_id": detail_ref.house_id}
+
+        # Step 2: Fetch and parse detail page data
         house_info = await self._fetch_and_parse_detail(detail_ref)
 
         if self.store:
             try:
                 if house_info:
-                    # Case 1: Successful or partial parse, store the snapshot
-                    data_to_store = house_info.to_dict_items()
-                    # Manually ensure the listing_id is present, as it's crucial for upsert logic
+                    # Step 3: Merge detail data. This overwrites common fields (e.g., status)
+                    # with more accurate data from the detail page and adds new fields.
+                    detail_data = house_info.to_dict_items()
+                    data_to_store.update(detail_data)
+
+                    # Clean up the ID field after merge. The detail page's 'property_id'
+                    # is the same as 'listing_id', so we can remove the redundant key.
                     if "property_id" in data_to_store:
-                        data_to_store["listing_id"] = data_to_store.pop("property_id")
-                    if "listing_id" not in data_to_store:
-                        data_to_store["listing_id"] = detail_ref.house_id
+                        del data_to_store["property_id"]
 
                     await self.store.store_listing(data_to_store)
-                    self.snapshots_stored += 1  # Counting each snapshot as a "store"
+                    self.snapshots_stored += 1
                 else:
-                    # Case 2: Total parsing failure, create a tombstone snapshot
+                    # Case: Total parsing failure, create a tombstone snapshot
                     logger.warning(
                         f"Creating tombstone snapshot for failed parse of house ID: {detail_ref.house_id}"
                     )
                     tombstone_data = {
-                        "id": detail_ref.house_id,
+                        "listing_id": detail_ref.house_id,
                         "status": "[PARSE_FAILED]",
                     }
                     await self.store.store_listing(tombstone_data)
@@ -593,7 +613,8 @@ class FundaCrawler(AbstractCrawler):
                 results[thumb_id] = success
                 if success and config.SAVE_DATA_OPTION == "postgres":
                     image_data = {
-                        "house_id": house_id,
+                        "listing_id": house_id,  # Rename to match schema
+                        "offering_type": config.OFFERING_TYPE,  # Add offering type
                         "image_url": url,
                         "local_path": str(save_path),
                     }
