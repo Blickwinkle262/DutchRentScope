@@ -181,3 +181,4 @@ logs/**
 
 # cookie files
 data/*.json
+config/base_config.py
